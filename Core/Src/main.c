@@ -33,13 +33,75 @@ unsigned char *getImageData();
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#define PWM
-#define LCD
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+// cpu clock 84 for stm32f401
+#define SYS_CLK_MHZ 84
+// use internal timers for sound out
+//#define USE_PWM
+
+// from 0 to 2 SPI LCD
+#define NUMBER_OF_LCD 1
+
+//slower for float - faster for integer
+//#define USE_FLOAT_SIGMA
+
+// integration order 1 or 2
+//#define ORDER 1
+#define ORDER 2
+
+
+// if disabled - direct output (order 0)
+#define SIGMA_DELTA
+
+// if enabled - use bilinear interpolation
+#define BILINEAR
+
+
+#ifdef  USE_PWM
+#define MAX_LEVELS (SYS_CLK_MHZ*1000000/44100)
+#ifdef  SIGMA_DELTA
+#define MAX_VOL (((int)(MAX_LEVELS/SFACT))&~1)
+#define SFACT 2.3
+#else
+#define SFACT 1.0
+#endif
+#else   //No PWM, I2S output to external DAC
+#define MAX_VOL (65536)
+#define SFACT 1.0
+#endif
+
+#define SIGMA_BITS  16
+#define SIGMA       (1<<SIGMA_BITS)
+
+
+#define USB_DATA_BITS   16
+#define USB_DATA_BITS_H (USB_DATA_BITS-1)
+
+#define N_SIZE_BITS (8)
+#define N_SIZE (1<<N_SIZE_BITS)
+
+#define ASBUF_SIZE     (N_SIZE*2)
+int16_t baudio_buffer[ASBUF_SIZE];
+
+
+#define TIME_BIT_SCALE_FACT 19u
+#define TIME_SCALE_FACT     (1u<<TIME_BIT_SCALE_FACT)
+
+// bilinear is more precision
+#ifdef BILINEAR
+#define BIT_SHIFT_SCALE_FACT 12
+#define SHIFT_SCALE_FACT  (1<<BIT_SHIFT_SCALE_FACT)
+#endif
+
+
+//#define MAX_VOL (2046/TIME_SCALE_FACT)
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -79,20 +141,6 @@ static void MX_TIM3_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-#define N_SIZE_BITS (8)
-#define N_SIZE (1<<N_SIZE_BITS)
-
-#define ASBUF_SIZE     (N_SIZE*2)
-int16_t baudio_buffer[ASBUF_SIZE];
-
-
-//#define MAX_VOL (2046/TIME_SCALE_FACT)
-#define SIGMA_DELTA
-#ifdef SIGMA_DELTA
-#define MAX_VOL (950)
-#else
-#define MAX_VOL (1904)
-#endif
 uint16_t* VoiceBuff0 = (uint16_t*)&baudio_buffer[0];
 uint16_t* VoiceBuff1 = (uint16_t*)&baudio_buffer[N_SIZE];
 
@@ -116,7 +164,7 @@ void init_timers()
 
 	  TIM1->ARR = MAX_VOL+1;
 	  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA2);
-	  LL_DMA_ConfigAddresses(DMA2, LL_DMA_STREAM_1, (uint32_t)&VoiceBuff0[0], (uint32_t)&TIM1->CCR1, LL_DMA_GetDataTransferDirection(DMA2, LL_DMA_STREAM_2));
+	  LL_DMA_ConfigAddresses(DMA2, LL_DMA_STREAM_1, (uint32_t)&VoiceBuff0[0], (uint32_t)&TIM1->CCR1, LL_DMA_GetDataTransferDirection(DMA2, LL_DMA_STREAM_1));
 	  LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_1, N_SIZE);
 	  LL_DMA_EnableIT_TC(DMA2, LL_DMA_STREAM_1);
 	  LL_DMA_EnableIT_TE(DMA2, LL_DMA_STREAM_1);
@@ -142,8 +190,25 @@ void init_timers()
 	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1);
 	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH2);
 
+
+
 	  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH1);
 	  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH2);
+#if 0
+	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
+	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH2N);
+	  //LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1,LL_TIM_OCPOLARITY_HIGH);
+	  //LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1N,LL_TIM_OCPOLARITY_LOW);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1,LL_TIM_OCPOLARITY_HIGH);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1N,LL_TIM_OCPOLARITY_HIGH);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH2,LL_TIM_OCPOLARITY_HIGH);
+	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH2N,LL_TIM_OCPOLARITY_HIGH);
+      int res;
+	  res = LL_TIM_OC_GetPolarity(TIM1, LL_TIM_CHANNEL_CH1);
+	  printf("OC_GetPolarity %d\n",res);
+	  res = LL_TIM_OC_GetPolarity(TIM1, LL_TIM_CHANNEL_CH1N);
+	  printf("OC_GetPolarity %d\n",res);
+#endif
 
 
 	  LL_TIM_EnableCounter(TIM1);
@@ -153,12 +218,13 @@ void init_timers()
 	  
 
 }
-void init_timer3LL()
-{
-	LL_TIM_EnableCounter(TIM3);
-	LL_TIM_GenerateEvent_UPDATE(TIM3);
-	LL_TIM_GenerateEvent_CC1(TIM3);
-}
+//void init_timer3LL()
+//{
+//	LL_TIM_EnableCounter(TIM3);
+//	LL_TIM_GenerateEvent_UPDATE(TIM3);
+//	LL_TIM_GenerateEvent_CC1(TIM3);
+//}
+
 uint32_t AUDIO_PeriodicTC_FS_Counter;
 void retarget_put_char(char p)
 {
@@ -201,16 +267,14 @@ volatile int HalfTransfer_CallBack_FS_Counter;
 
 
 //volatile fl = 0;
-int32_t   samplesInBuff        = 0;
+uint32_t   samplesInBuff        = 0;
 int32_t   samplesInBuffH       = 0;
 int16_t * usb_SndBuffer        = 0;
 
-#define BIT_SCALE_FACT 16
-#define SCALE_FACT     (1<<BIT_SCALE_FACT)
 
 uint32_t  samplesInBuffScaled  = 0;
 uint32_t  readPositionXScaled  = 0;  //readPosition<<12;
-uint32_t  readSpeedXScaled     = 0.8*SCALE_FACT*(48000.0/47348.0);
+uint32_t  readSpeedXScaled     = 1.01*TIME_SCALE_FACT*(48000.0/(44100*SFACT));
 
 
 struct LR
@@ -218,30 +282,34 @@ struct LR
 	int16_t L;
 	int16_t R;
 };
-int32_t ampL = 0;
-int32_t ampR = 0;
-int32_t LLL = 0;
-int32_t RRR = 0;
+volatile int32_t ampL = 0;
+volatile int32_t ampR = 0;
+volatile int32_t LLL = 0;
+volatile int32_t RRR = 0;
+volatile int UsbSamplesAvail = 0;
 struct LR getNextSampleLR()
 {
 	struct LR res ;
 	res.L = 0;
 	res.R = 0;
-	if(usb_SndBuffer)
+	//if(usb_SndBuffer)
+	HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_SET);
+
+	if(UsbSamplesAvail)
 	{
+		HAL_GPIO_WritePin(LED_GPIO_Port,LED_Pin,GPIO_PIN_RESET);
 		readPositionXScaled += readSpeedXScaled;
 		if(readPositionXScaled >= samplesInBuffScaled)
 		{
 			readPositionXScaled -= samplesInBuffScaled;
 		}
 
-		uint32_t readPositionIntC = readPositionXScaled>>BIT_SCALE_FACT;
+		uint32_t readPositionIntC = readPositionXScaled>>TIME_BIT_SCALE_FACT;
 		uint32_t readPositionIntN = readPositionIntC+1;
 
 
 		int16_t L  = usb_SndBuffer[readPositionIntC*2+0];//+usb_SndBuffer[readPositionIntN*2+0];
 		int16_t R  = usb_SndBuffer[readPositionIntC*2+1];//+usb_SndBuffer[readPositionIntN*2+1];
-#define BILINEAR
 
 #ifdef BILINEAR
 		if(readPositionIntN>=samplesInBuff)
@@ -251,27 +319,14 @@ struct LR getNextSampleLR()
 		int16_t LS  = usb_SndBuffer[readPositionIntN*2+0];//+usb_SndBuffer[readPositionIntN*2+0];
 		int16_t RS  = usb_SndBuffer[readPositionIntN*2+1];//+usb_SndBuffer[readPositionIntN*2+1];
 
-		int32_t W1  =  readPositionXScaled & ((1<<BIT_SCALE_FACT)-1);
-		int32_t W  =  (1<<BIT_SCALE_FACT)-W1;
-		res.L = (L*W+LS*W1)>>BIT_SCALE_FACT;
-		res.R = (R*W+RS*W1)>>BIT_SCALE_FACT;
+		int32_t W1  =  readPositionXScaled>>(TIME_BIT_SCALE_FACT-BIT_SHIFT_SCALE_FACT) & ((1<<BIT_SHIFT_SCALE_FACT)-1);
+		int32_t W  =  (1<<BIT_SHIFT_SCALE_FACT)-W1;
+		res.L = (L*W+LS*W1)>>BIT_SHIFT_SCALE_FACT;
+		res.R = (R*W+RS*W1)>>BIT_SHIFT_SCALE_FACT;
 #else  //floor
 		res.L = L;
 		res.R = R;
 #endif
-	}
-	int32_t LL = (res.L>0?res.L:-res.L);
-	int32_t RR = (res.R>0?res.R:-res.R);
-
-	LLL = (LLL*15+LL)/16;
-	RRR = (RRR*15+RR)/16;
-	if(LLL>ampL)
-	{
-		ampL = LLL;
-	}
-	if(RRR>ampR)
-	{
-		ampR = RRR;
 	}
     return res;
 }
@@ -289,17 +344,16 @@ void AUDIO_OUT_Start(uint16_t* pBuffer, uint32_t Size)
 	usb_SndBuffer = pBuffer;
 	AUDIO_OUT_Play_Counter++;
 
-	samplesInBuffScaled = samplesInBuff<<BIT_SCALE_FACT;
+	samplesInBuffScaled = samplesInBuff<<TIME_BIT_SCALE_FACT;
 	readPositionXScaled = samplesInBuffScaled/2;
 
 }
 
 uint16_t  lastDmaAccessTime;
 int       lastDmaPos;
-int32_t   outDmaSpeedScaled;
+uint32_t   outDmaSpeedScaled;
 int       sForcedSpeed;
 uint16_t  lastAudioUsbTimeStamp;
-
 
 int prevPos = -1 ;
 
@@ -308,8 +362,24 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 	AUDIO_PeriodicTC_FS_Counter++;
 	if(!usb_SndBuffer) return ;
 	int cPos  = (pBuffer - (uint16_t*)usb_SndBuffer)/2;
+
+	for(int s=0;s<Size/4;s++)
+	{
+		int16_t LL = pBuffer[s*2];
+		int16_t RR = pBuffer[s*2+1];
+		if(LL>ampL)
+		{
+			ampL = LL;
+		}
+		if(RR>ampR)
+		{
+			ampR = RR;
+		}
+	}
+
 	if(cPos==0)
 	{
+
 		uint16_t lastAudioUsbTimeStampNew = TIM3->CNT;
 		//
 		uint16_t timeForRecivedSamples = lastAudioUsbTimeStampNew - lastAudioUsbTimeStamp;
@@ -318,20 +388,24 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 
 		uint16_t timeFromLastDMA = lastAudioUsbTimeStampNew - lastDmaAccessTime;
 
+
 		//where i am ?
 
-		int approximateSamplesOutedFromLastDMA  = ((int)timeFromLastDMA)*outDmaSpeedScaled/SCALE_FACT;
+		int approximateSamplesOutedFromLastDMA  = ((int)timeFromLastDMA)*outDmaSpeedScaled/TIME_SCALE_FACT;
 
 		int appDistance  =  (int)(lastDmaPos + approximateSamplesOutedFromLastDMA )-cPos;
-		if(prevPos!=-1)
+
+        float  speedFact =  (((float)timeForRecivedSamples) * outDmaSpeedScaled)/TIME_SCALE_FACT;
+
+        sForcedSpeed  = (int)(((float)samplesInBuff)*TIME_SCALE_FACT / speedFact);
+
+        if(UsbSamplesAvail)
 		{
 			int dC = appDistance - prevPos;
 			while(dC>samplesInBuffH)  dC-=samplesInBuff;
 			while(dC<-samplesInBuffH) dC+=samplesInBuff;
 			if(dC > samplesInBuffH/16 || dC<-samplesInBuffH/16 ) //seems completely lost sync , force set frequency
 			{
-		        int32_t  speedFact =  (((int)timeForRecivedSamples) * outDmaSpeedScaled)/SCALE_FACT;
-		        sForcedSpeed  = samplesInBuff*SCALE_FACT / speedFact;
 				readSpeedXScaled = sForcedSpeed;
 			}
 			else
@@ -340,7 +414,12 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 				readSpeedXScaled-=dC;
 			}
 		}
+        else
+        {
+        	readPositionXScaled = samplesInBuffScaled/2;
+        }
 		prevPos =  appDistance;
+		UsbSamplesAvail = samplesInBuff*((int)SFACT)*8;
 	}
 	return 0;
 }
@@ -403,6 +482,12 @@ struct sigmaDeltaStorage
 	float integral;
 	float y;
 };
+struct sigmaDeltaStorage2
+{
+	float integral0;
+	float integral1;
+	float y;
+};
 
 
 float funcN1(float x,int N)
@@ -415,8 +500,6 @@ float funcN1(float x,int N)
 	return y;
 }
 
-struct sigmaDeltaStorage static_L_channel;
-struct sigmaDeltaStorage static_R_channel;
 
 float sigma_delta_slow(struct sigmaDeltaStorage* st,float x)
 {
@@ -424,43 +507,77 @@ float sigma_delta_slow(struct sigmaDeltaStorage* st,float x)
 	st->y = funcN1(st->integral,(int)(MAX_VOL/2));
 	return st->y;
 }
+
+
+
+struct  sigmaDeltaStorage_SCALED
+{
+	int integral;
+	int y;
+};
+struct  sigmaDeltaStorage2_SCALED
+{
+	int integral0;
+	int integral1;
+	int y;
+};
+
 float sigma_delta(struct sigmaDeltaStorage* st,float x)
 {
 	st->integral+= x - st->y;
 	st->y = floorf(st->integral+0.5f);
+	if(st->y<0)st->y = 0;
+	if(st->y>MAX_VOL)st->y = MAX_VOL;
+
 	return st->y;
 }
 
-#define SIGMA_BITS  17
-#define SIGMA   (1<<SIGMA_BITS)
-
-struct sigmaDeltaStorage_SCALED
+float sigma_delta2(struct sigmaDeltaStorage2* st,float x)
 {
-	float integral;
-	float y;
-};
+	st->integral0+= x             - st->y;
+	st->integral1+= st->integral0 - st->y;
+	st->y = floorf(st->integral1+0.5f);
+	if(st->y<0)st->y = 0;
+	if(st->y>MAX_VOL)st->y = MAX_VOL;
 
-#define BIG_NUM (1<<30)
-int funcN1_SCALED(int x,int N)
-{
-	//float y = 2*floorf(x*0.5f)+1.0f;
-	//int floor_res = (x/2+BIG_NUM)/SIGMA;
-	//int y = floor_res*2*SIGMA -BIG_NUM + SIGMA;
-	int y = x;
-	//saturate
-	if(y>N) y=N;
-	if(y<-N) y=-N;
-	return y;
+	return st->y;
 }
+
+
 int sigma_delta_SCALED(struct sigmaDeltaStorage_SCALED* st,int x_SCALED)
 {
-	st->integral+= x_SCALED - st->y;
-	st->y = funcN1(st->integral,(int)(SIGMA*MAX_VOL/2));
+	st->integral+= x_SCALED - st->y*SIGMA;
+	st->y		 =(st->integral+SIGMA/2)/SIGMA;
+	if(st->y < 0)
+		st->y = 0;
+	if(st->y > MAX_VOL)
+		st->y = MAX_VOL;
 	return st->y;
 }
-struct sigmaDeltaStorage static_L_channel_SCALED;
-struct sigmaDeltaStorage static_R_channel_SCALED;
 
+int sigma_delta2_SCALED(struct sigmaDeltaStorage2_SCALED* st,int x_SCALED)
+{
+	st->integral0+= x_SCALED      - st->y*SIGMA;
+	st->integral1+= st->integral0 - st->y*SIGMA;
+	st->y		 =(st->integral1+SIGMA/2)/SIGMA;
+	if(st->y < 0)
+		st->y = 0;
+	if(st->y > MAX_VOL)
+		st->y = MAX_VOL;
+	return st->y;
+}
+
+struct sigmaDeltaStorage static_L_channel;
+struct sigmaDeltaStorage static_R_channel;
+
+struct sigmaDeltaStorage_SCALED static_L_channel_SCALED;
+struct sigmaDeltaStorage_SCALED static_R_channel_SCALED;
+
+struct sigmaDeltaStorage2 static_L_channel2;
+struct sigmaDeltaStorage2 static_R_channel2;
+
+struct sigmaDeltaStorage2_SCALED static_L_channel2_SCALED;
+struct sigmaDeltaStorage2_SCALED static_R_channel2_SCALED;
 
 
 void TIM1_TC1()
@@ -469,66 +586,118 @@ void TIM1_TC1()
 	uint16_t  tfl;
 	prevTime = lastDmaAccessTime;
 	lastDmaAccessTime = TIM3->CNT;
-	lastDmaPos  = readPositionXScaled>>BIT_SCALE_FACT;
+	lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
 	tfl      = lastDmaAccessTime -prevTime;
-	outDmaSpeedScaled =  SCALE_FACT*N_SIZE/(tfl);
-
+	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(tfl);
+    if(UsbSamplesAvail > N_SIZE/2)
+    {
+    	UsbSamplesAvail -= N_SIZE/2;
+    }
+    else
+    {
+    	UsbSamplesAvail = 0;
+    }
 	TransferComplete_CallBack_FS_Counter++;
 #ifndef SIGMA_DELTA
 	for(int k=0;k<N_SIZE/2;k++)
 	{
 		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k+N_SIZE/2] = MAX_VOL*(tt.L+(1<<15))/65536;
-		VoiceBuff1[k+N_SIZE/2] = MAX_VOL*(tt.R+(1<<15))/65536;
+		VoiceBuff0[k+N_SIZE/2] = MAX_VOL*(tt.L+(1<<USB_DATA_BITS_H))>>USB_DATA_BITS;
+		VoiceBuff1[k+N_SIZE/2] = MAX_VOL*(tt.R+(1<<USB_DATA_BITS_H))>>USB_DATA_BITS;
 	}
 #else
-#if 1
+#ifdef USE_FLOAT_SIGMA
+#if    (ORDER==1)
 	float a_scale = MAX_VOL/65536.0f;
 	for(int k=0;k<N_SIZE/2;k++)
 	{
 		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k+N_SIZE/2] =( int)(sigma_delta(&static_L_channel,a_scale*tt.L)+ MAX_VOL/2);
-		VoiceBuff1[k+N_SIZE/2] =( int)(sigma_delta(&static_R_channel,a_scale*tt.R)+ MAX_VOL/2);
+		VoiceBuff0[k+N_SIZE/2] =( int)(sigma_delta2(&static_L_channel2,a_scale*tt.L+ MAX_VOL/2));
+		VoiceBuff1[k+N_SIZE/2] =( int)(sigma_delta2(&static_R_channel2,a_scale*tt.R+ MAX_VOL/2));
 	}
-#else
+#else //order == 2
 	float a_scale = MAX_VOL/65536.0f;
 	for(int k=0;k<N_SIZE/2;k++)
 	{
 		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k+N_SIZE/2] =( int)(sigma_delta_SCALED(&static_L_channel_SCALED,a_scale*tt.L*SIGMA))/SIGMA+ MAX_VOL/2;
-		VoiceBuff1[k+N_SIZE/2] =( int)(sigma_delta_SCALED(&static_R_channel_SCALED,a_scale*tt.R*SIGMA))/SIGMA+ MAX_VOL/2;
+		VoiceBuff0[k+N_SIZE/2] =( int)(sigma_delta(&static_L_channel,a_scale*tt.L+ MAX_VOL/2));
+		VoiceBuff1[k+N_SIZE/2] =( int)(sigma_delta(&static_R_channel,a_scale*tt.R+ MAX_VOL/2));
 	}
+#endif
+#else
+#if (ORDER==1)
+	for(int k=0;k<N_SIZE/2;k++)
+	{
+		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
+		VoiceBuff0[k+N_SIZE/2] =sigma_delta_SCALED(&static_L_channel_SCALED,(MAX_VOL*(tt.L+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+		VoiceBuff1[k+N_SIZE/2] =sigma_delta_SCALED(&static_R_channel_SCALED,(MAX_VOL*(tt.R+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+	}
+#else //order == 2
+	for(int k=0;k<N_SIZE/2;k++)
+	{
+		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
+		VoiceBuff0[k+N_SIZE/2] =sigma_delta2_SCALED(&static_L_channel2_SCALED,(MAX_VOL*(tt.L+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+		VoiceBuff1[k+N_SIZE/2] =sigma_delta2_SCALED(&static_R_channel2_SCALED,(MAX_VOL*(tt.R+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+	}
+#endif
+
 #endif
 #endif
 }
 void TIM1_HT1()
 {
 	HalfTransfer_CallBack_FS_Counter++;
+    if(UsbSamplesAvail > N_SIZE/2)
+    {
+    	UsbSamplesAvail -= N_SIZE/2;
+    }
+    else
+    {
+    	UsbSamplesAvail = 0;
+    }
 	struct LR * bfr = ((struct LR *) baudio_buffer);
 #ifndef  SIGMA_DELTA
 	for(int k=0;k<N_SIZE/2;k++)
 	{
 		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k] = MAX_VOL*(tt.L+(1<<15))/65536;;
-		VoiceBuff1[k] = MAX_VOL*(tt.R+(1<<15))/65536;
+		VoiceBuff0[k] = MAX_VOL*(tt.L+(1<<USB_DATA_BITS_H))>>USB_DATA_BITS;;
+		VoiceBuff1[k] = MAX_VOL*(tt.R+(1<<USB_DATA_BITS_H))>>USB_DATA_BITS;
 	}
 #else
-#if 1
+#ifdef USE_FLOAT_SIGMA
+#if (ORDER==1)
 	float a_scale = MAX_VOL/65536.0f;
 	for(int k=0;k<N_SIZE/2;k++)
 	{
 		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k] =( int)(sigma_delta(&static_L_channel,a_scale*tt.L)+ MAX_VOL/2);
-		VoiceBuff1[k] =( int)(sigma_delta(&static_R_channel,a_scale*tt.R)+ MAX_VOL/2);
+		VoiceBuff0[k] =( int)(sigma_delta2(&static_L_channel2,a_scale*tt.L+ MAX_VOL/2));
+		VoiceBuff1[k] =( int)(sigma_delta2(&static_R_channel2,a_scale*tt.R+ MAX_VOL/2));
 	}
-#else
-	float a_scale = MAX_VOL/65536.0f;
+#else //order == 2
+	float a_scale = ((float)MAX_VOL)/(1<<USB_DATA_BITS);
 	for(int k=0;k<N_SIZE/2;k++)
 	{
 		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k] =( int)(sigma_delta_SCALED(&static_L_channel_SCALED,a_scale*tt.L*SIGMA))/SIGMA+ MAX_VOL/2;
-		VoiceBuff1[k] =( int)(sigma_delta_SCALED(&static_R_channel_SCALED,a_scale*tt.R*SIGMA))/SIGMA+ MAX_VOL/2;
+		VoiceBuff0[k] =( int)(sigma_delta(&static_L_channel,a_scale*tt.L+ MAX_VOL/2));
+		VoiceBuff1[k] =( int)(sigma_delta(&static_R_channel,a_scale*tt.R+ MAX_VOL/2));
 	}
+#endif
+#else
+#if ORDER==1
+	for(int k=0;k<N_SIZE/2;k++)
+	{
+		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
+		VoiceBuff0[k] =sigma_delta_SCALED(&static_L_channel_SCALED,(MAX_VOL*(tt.L+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+		VoiceBuff1[k] =sigma_delta_SCALED(&static_R_channel_SCALED,(MAX_VOL*(tt.R+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+	}
+#else //order == 2
+	for(int k=0;k<N_SIZE/2;k++)
+	{
+		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
+		VoiceBuff0[k] =sigma_delta2_SCALED(&static_L_channel2_SCALED,(MAX_VOL*(tt.L+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+		VoiceBuff1[k] =sigma_delta2_SCALED(&static_R_channel2_SCALED,(MAX_VOL*(tt.R+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+	}
+#endif
 #endif
 #endif
 }
@@ -537,12 +706,20 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
 	//fl = 0;
 	uint16_t prevTime;
 	uint16_t  tfl;
+    if(UsbSamplesAvail > N_SIZE/2)
+    {
+    	UsbSamplesAvail -= N_SIZE/2;
+    }
+    else
+    {
+    	UsbSamplesAvail = 0;
+    }
 
 	prevTime = lastDmaAccessTime;
 	lastDmaAccessTime = TIM3->CNT;
-	lastDmaPos  = readPositionXScaled>>BIT_SCALE_FACT;
+	lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
 	tfl = lastDmaAccessTime -prevTime;
-	outDmaSpeedScaled =  SCALE_FACT*N_SIZE/(tfl);
+	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(tfl);
 
 	TransferComplete_CallBack_FS_Counter++;
     struct LR * bfr = ((struct LR *) baudio_buffer)+ASBUF_SIZE/4;
@@ -556,6 +733,14 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
 //void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 {
+    if(UsbSamplesAvail > N_SIZE/2)
+    {
+    	UsbSamplesAvail -= N_SIZE/2;
+    }
+    else
+    {
+    	UsbSamplesAvail = 0;
+    }
 	HalfTransfer_CallBack_FS_Counter++;
 	struct LR * bfr = ((struct LR *) baudio_buffer);
 	for(int k=0;k<ASBUF_SIZE/4;k++)
@@ -615,58 +800,60 @@ int main(void)
 
   printf("\nStart program\n");
   cleanAudioBuffer();
-  init_timer3LL();
-  //HAL_TIM_Base_Start(&htim3);
+  TIM3->PSC  = SYS_CLK_MHZ*10/4-1;
+  HAL_TIM_Base_Start(&htim3);
   HAL_StatusTypeDef stat;
 
-#ifdef  PWM
+#ifdef  USE_PWM
   LL_TIM_DisableAllOutputs(TIM1);
   init_timers();
   HAL_Delay(100);
   LL_TIM_EnableAllOutputs(TIM1);
-  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
-  GPIO_InitStruct.Pin = LL_GPIO_PIN_8|LL_GPIO_PIN_9;
-  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
-  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
-  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
-  GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
-  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+//  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+//  GPIO_InitStruct.Pin = LL_GPIO_PIN_8|LL_GPIO_PIN_9;
+//  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+//  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+//  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+//  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+//  GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
+//  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 #else
   stat = HAL_I2S_Transmit_DMA(&hi2s2, baudio_buffer,ASBUF_SIZE);
   HAL_Delay(100);
 #endif
   printf("Start Speed %x\n",readSpeedXScaled);
   printf("sSpeed= %x %04d %04d %04d speed=%x\n",sForcedSpeed,HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
-#ifdef LCD
-  LCD_reset();
-  for(int l=0;l<2;l++)
-  {
-	  setLCD(l);
-	  LCD_init();
-	  LCD_setRotation(PORTRAIT_FLIP);
+#if (NUMBER_OF_LCD)
+	  LCD_reset();
+	  for(int l=0;l<NUMBER_OF_LCD;l++)
 	  {
-			uint32_t trt = HAL_GetTick();
-			int k;
-			for(int k=0;k<1;k++)
-			{
-				LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(), rand());
-				HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
-			}
-			trt = (HAL_GetTick()-trt);
+		  setLCD(l);
+		  LCD_init();
+		  LCD_setRotation(PORTRAIT_FLIP);
+		  {
+				uint32_t trt = HAL_GetTick();
+				int k;
+				for(int k=0;k<1;k++)
+				{
+					LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(), rand());
+				}
+				trt = (HAL_GetTick()-trt);
 
-			char txt[0x20];
+				char txt[0x20];
 
-			sprintf(txt,"SCR_FULL %d uS\n",trt*1000);
-			printf("%s",txt);
-			LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
+				sprintf(txt,"SCR_FULL %d uS\n",trt*1000);
+				printf("%s",txt);
+				LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
+		  }
 	  }
-  }
 #endif
   int pcXe_OLD[2]={-1,-1};
   int pcYe_OLD[2]={-1,-1};
+  int pcX_OLD[2]={-1,-1};
+  int pcY_OLD[2]={-1,-1};
   float elapsed_time = 0;
   int  elapsed_time_ticks = 0;
+  int  mode = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -681,64 +868,100 @@ int main(void)
 	  if(timcnt%100==0)
 	  {
 	  // printf("%04d %04d %04d %04d %04d\n",HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,AUDIO_OUT_Play_Counter,AUDIO_OUT_ChangeBuffer_Counter);
-		  printf("outSpeed=%0.01f Hz elaps = %f,%d,ForcedSpeed = %x %04d %04d %04d PLLspeed = %x\n",(400000.0f*(float)outDmaSpeedScaled)/SCALE_FACT,elapsed_time,elapsed_time_ticks,sForcedSpeed,HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
+		  printf("MAX_VOL = %d outSpeed=%0.01f Hz %x elaps = %d mS,ForcedSpeed = %x %04d PLLspeed = %x\n",MAX_VOL,(400000.0f*(float)outDmaSpeedScaled)/TIME_SCALE_FACT,outDmaSpeedScaled,elapsed_time_ticks,sForcedSpeed,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
 
 	  }
-	  if(1)
+	  if(HAL_GPIO_ReadPin(KEY_GPIO_Port,KEY_Pin)==0 && NUMBER_OF_LCD > 0)
+	  {
+		 if(mode==0)
+		 {
+			 HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin,GPIO_PIN_RESET);
+   		     LCD_reset();
+			 HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin,GPIO_PIN_RESET);
+   		     HAL_Delay(1000);
+			 mode = 1;
+		 }
+		 else
+		 {
+			 mode = 0;
+
+			  for(int l=0;l<NUMBER_OF_LCD;l++)
+			  {
+				  pcXe_OLD[l] = -1;
+				  setLCD(l);
+				  LCD_init();
+				  LCD_setRotation(PORTRAIT_FLIP);
+				  LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
+			  }
+			 HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin,GPIO_PIN_SET);
+			 HAL_Delay(1000);
+		 }
+	  }
+		ampL = (ampL*15)/(16);
+		ampR = (ampR*15)/(16);
+	  if(mode==0)
 	  {
 			//LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
 		    uint32_t trt = HAL_GetTick();
 
-		    uint16_t strt = TIM3->CNT;
-		    for(int l=0;l<2;l++)
+		    for(int l=0;l<NUMBER_OF_LCD;l++)
 		    {
-#ifdef LCD
 		    	setLCD(l);
-#endif
 				vec2f vc = {sqrtf((159-79)*(159-79)+(119-55)*(119-55)),0.0f};
 				mat4f mt;
-				ampL = (ampL*15)/(16);
-				ampR = (ampR*15)/(16);
-				//ampR = (ampR*RSCALE)/(RSCALE+1);
-
-				float ampl = ((l==0)?ampL:ampR)/600.0f/16;
+				float ampl = ((l==0)?ampR:ampL)/600.0f/16;
+#if (NUMBER_OF_LCD==1)
+					ampl = (ampR+ampL)*0.5f/600.0f/16;
+#endif
 				if(ampl>1.0f) ampl = 1.0f;
 				if(ampl<0.0f) ampl = 0.0f;
-				makeRotMat(mt,(90+42-84*ampl)/180*M_PI);
+				makeRotMat(mt,(90+42-84*ampl)/180*((float)M_PI));
 				vec2f vcA = applyMat(mt,vc);
 				//printMat(mt);
 				//printVec(vc);
 				///printVec(vcA);
-				int pcX = 119;//55
-				int pcY = 159;//79
+				int pcX = 121;//55
+				int pcY = 167;//79
 				int pcXe = (int)(pcX+vcA.x);//55
-				int pcYe= (int)(pcY-vcA.y);//79
-#ifdef LCD
-				if(pcXe_OLD[l]>0)
+				int pcYe = (int)(pcY-vcA.y);//79
+				int pcXs = (int)(pcX+vcA.x*0.22f);
+				int pcYs = (int)(pcY-vcA.y*0.22f);
+				//if(!(pcXe_OLD[l] == pcXe && pcYe_OLD[l] == pcYe))
 				{
-					LCD_Draw_LinePNX(pcX-2,pcY,pcXe_OLD[l]-2,pcYe_OLD[l],240,4,getImageData());
-					//LCD_Draw_LineP(pcX-2,pcY,pcXe_OLD[l]-2,pcYe_OLD[l],getImageData());
-					//LCD_Draw_LineP(pcX-1,pcY,pcXe_OLD[l]-1,pcYe_OLD[l],getImageData());
-					//LCD_Draw_LineP(pcX,pcY,pcXe_OLD[l],pcYe_OLD[l],getImageData());
-					//LCD_Draw_LineP(pcX+1,pcY,pcXe_OLD[l]+1,pcYe_OLD[l],getImageData());
+					if(pcXe_OLD[l]>0)
+					{
+						LCD_Draw_LinePNX(pcX_OLD[l]-2-5,pcY_OLD[l],pcXe_OLD[l]-2-5,pcYe_OLD[l],240,4,getImageData());
+						LCD_Draw_LinePNX(pcX_OLD[l]-2,pcY_OLD[l],pcXe_OLD[l]-2,pcYe_OLD[l],240,4,getImageData());
+					}
+					if(pcXe_OLD[l]>0)
+					{
+					}
+					LCD_Draw_LinePNXShadow(pcXs-2-5,pcYs,pcXe-2-5,pcYe,240,4,getImageData());
+					//LCD_Draw_LinePNX(pcXs-2-5,pcYs,pcXe-2-5,pcYe,240,4,getImageDarkData());
+
+					uint16_t colors [4];
+					colors[0] = color_convertRGB_to16d(0x3e + 20,0x27 + 20,0x2f + 20);
+					colors[1] = color_convertRGB_to16d(0xd1/2,0x26/2,0x64/2);
+					colors[2] = color_convertRGB_to16d(0xd1,0x26,0x64);
+					colors[3] = color_convertRGB_to16d(0x3e,0x27,0x2f);
+					LCD_Draw_LineNX(pcXs-2,pcYs,pcXe-2,pcYe,4,(uint8_t*) colors);
 				}
-				uint16_t colors [4] = {RED,BLACK,BLACK,RED};
-				LCD_Draw_LineNX(pcX-2,pcY,pcXe-2,pcYe,4,(uint8_t*) colors);
-#endif
+
 //				LCD_Draw_Line(pcX-2,pcY,pcXe-2,pcYe,RED);
 //				LCD_Draw_Line(pcX-1,pcY,pcXe-1,pcYe,BLACK);
 //				LCD_Draw_Line(pcX,pcY,pcXe,pcYe,BLACK);
 //				LCD_Draw_Line(pcX+1,pcY,pcXe+1,pcYe,RED);
 
+				 pcX_OLD[l] = pcXs;
+				 pcY_OLD[l] = pcYs;
 				 pcXe_OLD[l] = pcXe;
 				 pcYe_OLD[l] = pcYe;
 		    }
-		    elapsed_time = ((uint16_t)(TIM3->CNT-strt))/400.0f;
 		    elapsed_time_ticks = HAL_GetTick() - trt;
 			//printf(txt,"%03d %03d\n",ampL,ampR);
 			//LCD_Draw_Text(txt,0,0,GREEN, 2,BLACK);
 	  }
-	  HAL_Delay(10);
+	  HAL_Delay(20);
 
   }
   /* USER CODE END 3 */
@@ -925,7 +1148,7 @@ static void MX_TIM1_Init(void)
 
   LL_DMA_SetDataTransferDirection(DMA2, LL_DMA_STREAM_1, LL_DMA_DIRECTION_MEMORY_TO_PERIPH);
 
-  LL_DMA_SetStreamPriorityLevel(DMA2, LL_DMA_STREAM_1, LL_DMA_PRIORITY_LOW);
+  LL_DMA_SetStreamPriorityLevel(DMA2, LL_DMA_STREAM_1, LL_DMA_PRIORITY_HIGH);
 
   LL_DMA_SetMode(DMA2, LL_DMA_STREAM_1, LL_DMA_MODE_CIRCULAR);
 
@@ -944,7 +1167,7 @@ static void MX_TIM1_Init(void)
 
   LL_DMA_SetDataTransferDirection(DMA2, LL_DMA_STREAM_2, LL_DMA_DIRECTION_MEMORY_TO_PERIPH);
 
-  LL_DMA_SetStreamPriorityLevel(DMA2, LL_DMA_STREAM_2, LL_DMA_PRIORITY_LOW);
+  LL_DMA_SetStreamPriorityLevel(DMA2, LL_DMA_STREAM_2, LL_DMA_PRIORITY_HIGH);
 
   LL_DMA_SetMode(DMA2, LL_DMA_STREAM_2, LL_DMA_MODE_CIRCULAR);
 
@@ -1005,7 +1228,7 @@ static void MX_TIM1_Init(void)
   */
   GPIO_InitStruct.Pin = LL_GPIO_PIN_0|LL_GPIO_PIN_13;
   GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
-  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
   GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
   GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
   GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
@@ -1013,7 +1236,7 @@ static void MX_TIM1_Init(void)
 
   GPIO_InitStruct.Pin = LL_GPIO_PIN_8|LL_GPIO_PIN_9;
   GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
-  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
   GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
   GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
   GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
@@ -1159,7 +1382,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : KEY_Pin */
   GPIO_InitStruct.Pin = KEY_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(KEY_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LCD1_CMD_Pin */

@@ -92,7 +92,8 @@ void setLCD(int num)
 
 
 #define SpixTimeout 1000
-
+#define SPIx_WriteF(Value)  { while(((SPIH.Instance->SR) & SPI_FLAG_TXE) != SPI_FLAG_TXE){} *((__IO uint8_t*)&SPIH.Instance->DR) = Value; }
+/*
 void SPIx_WriteF(uint8_t  Value)
 {
 	    //HAL_SPI_Transmit(&hspi2,&Value,1,SpixTimeout);
@@ -101,13 +102,13 @@ void SPIx_WriteF(uint8_t  Value)
 	    }
 	    *((__IO uint8_t*)&SPIH.Instance->DR) = Value;
 }
-
+*/
 
 void spiwrite(uint8_t c)
 {
-	while(SPIH.State!=HAL_SPI_STATE_READY){};
+//	while(SPIH.State!=HAL_SPI_STATE_READY){};
     HAL_SPI_Transmit(&SPIH, (uint8_t*) &c, 1 ,SpixTimeout);
-	while(SPIH.State!=HAL_SPI_STATE_READY){};
+	//while(SPIH.State!=HAL_SPI_STATE_READY){};
 }
 
 void    Delay(int num)
@@ -153,6 +154,10 @@ void color_convert(uint16_t color,uint8_t* result)
 uint16_t color_convertRGB_to16(uint8_t * adress)
 {
 	return ((adress[0]>>3)<<11)|((adress[1]>>2)<<5)|(adress[2]>>3);
+}
+uint16_t color_convertRGB_to16d(uint8_t R,uint8_t G,uint8_t B)
+{
+	return ((R>>3)<<11)|((G>>2)<<5)|(B>>3);
 }
 
 static uint16_t screen_width  = ILI9341_LCD_PIXEL_WIDTH;
@@ -253,6 +258,7 @@ void LCD_reset()
 
 void LCD_init()
 {
+	while(SPIH.State!=HAL_SPI_STATE_READY){};
     displayInit(cmd_240x240);
     setRotation(2);
 }
@@ -411,7 +417,6 @@ void LCD_Draw_Line(int x0, int y0, int x1, int y1,uint16_t color) {
   int err = (dx>dy ? dx : -dy)/2, e2;
 
   for(;;){
-	  while(SPIH.State!=HAL_SPI_STATE_READY){};
 		setAddrWindow(x0, y0,x0,y0);
 		LCD_DC_1;
 		SPIx_WriteF(Data0);
@@ -432,7 +437,7 @@ void LCD_Draw_LineNX(int x0, int y0, int x1, int y1,int N,uint8_t* color) {
   int err = (dx>dy ? dx : -dy)/2, e2;
 
   for(;;){
-	  while(SPIH.State!=HAL_SPI_STATE_READY){};
+	  //while(SPIH.State!=HAL_SPI_STATE_READY){};
 		setAddrWindow(x0, y0,x0+N-1,y0);
 		LCD_DC_1;
 		for(int k=0;k<N;k++)
@@ -456,7 +461,7 @@ void LCD_Draw_LinePNX(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* co
   int err = (dx>dy ? dx : -dy)/2, e2;
 
   for(;;){
-	  while(SPIH.State!=HAL_SPI_STATE_READY){};
+	  //while(SPIH.State!=HAL_SPI_STATE_READY){};
 		setAddrWindow(x0, y0,x0+N-1,y0);
 		LCD_DC_1;
 		for(int k=0;k<N;k++)
@@ -464,6 +469,47 @@ void LCD_Draw_LinePNX(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* co
 			int ind = (y0*Width+x0+k)*2;
 			SPIx_WriteF(color[ind+1]);
 			SPIx_WriteF(color[ind]);
+		}
+    if (x0==x1 && y0==y1) break;
+    e2 = err;
+    if (e2 >-dx) { err -= dy; x0 += sx; }
+    if (e2 < dy) { err += dx; y0 += sy; }
+  }
+}
+
+
+void LCD_Draw_LinePNXShadow(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* color) {
+
+	//while(SPIH.State!=HAL_SPI_STATE_READY){};
+	int k;
+  uint16_t* color16 = (uint16_t*)color;
+  uint16_t  result_color;
+  uint8_t*  pbyet = (uint8_t*)&result_color;
+
+  int dx = abs(x1-x0), sx = x0<x1 ? 1 : -1;
+  int dy = abs(y1-y0), sy = y0<y1 ? 1 : -1;
+  int err = (dx>dy ? dx : -dy)/2, e2;
+
+  for(;;){
+	  //while(SPIH.State!=HAL_SPI_STATE_READY){};
+		setAddrWindow(x0, y0,x0+N-1,y0);
+		LCD_DC_1;
+		for(int k=0;k<N;k++)
+		{
+			int ind = (y0*Width+x0+k);
+
+			uint16_t clr = color16[ind];
+#if 1
+			result_color =  (( 7*((clr>>11)&0x1f)>>3)<<11)|
+					        ( (7*((clr>>5)&0x3f)>>3)<<5)|
+							  (7*(clr&0x1f)>>3 );
+#else
+			result_color =  ((   ((clr>>11)&0x1f)>>1)<<11)|
+					        ( (  ((clr>>5)&0x3f)>>1)<<5)|
+							  (  (clr&0x1f)>>1 );
+#endif
+			SPIx_WriteF(pbyet[1]);
+			SPIx_WriteF(pbyet[0]);
 		}
     if (x0==x1 && y0==y1) break;
     e2 = err;
@@ -481,7 +527,7 @@ void LCD_Draw_LineP(int x0, int y0, int x1, int y1,uint8_t* color) {
   int err = (dx>dy ? dx : -dy)/2, e2;
 
   for(;;){
-	  while(SPIH.State!=HAL_SPI_STATE_READY){};
+	  //while(SPIH.State!=HAL_SPI_STATE_READY){};
 		setAddrWindow(x0, y0,x0,y0);
 		int ind = (y0*240+x0)*2;
 		LCD_DC_1;

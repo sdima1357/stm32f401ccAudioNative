@@ -136,6 +136,9 @@ void LCD_Draw_LineP(int x0, int y0, int x1, int y1,uint8_t* color) ;
 void LCD_Draw_Line(int x0, int y0, int x1, int y1,uint16_t color) ;
 void LCD_reset();
 void setLCD(int num);
+uint16_t color_convertRGB_to16(uint8_t * adress);
+uint16_t color_convertRGB_to16d(uint8_t R,uint8_t G,uint8_t B);
+void LCD_Draw_LinePNX(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* color);
 
 
 void setBacklight(int percent);
