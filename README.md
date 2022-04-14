@@ -12,5 +12,14 @@ So, we can have for only  $3 ,very low noise , high sound quality solution, whic
 
 Same technology can be used for esp32 high quality sound rendering.
 
+14.04.2022 :
+
+Added second order sigma-delta 
+
+number of LCD from zero to 2
+
+minor bugs fixed
+
+
 
 
