@@ -20,6 +20,8 @@ number of LCD from zero to 2
 
 minor bugs fixed
 
+optional external i2s module
+
 
 
 
