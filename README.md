@@ -10,7 +10,12 @@ High quality, low noise  DAC based on 2 PWM timer channels with virtual software
 There is implemented "sigma-delta floating point encoder" workaround of native stm32f401 limit 10.5 bits on 44100 Hz (1904 levels=84MHz/44.1KHz )
 So, we can have for only  $3 ,very low noise , high sound quality solution, which better then most onboard sound cards !
 
-Same technology can be used for esp32 high quality sound rendering.
+There is implemented virtual software second order sigma delta adc for the shift quantization noise to high frequency.
+see here (it [provide useful links too at the end of document):
+
+https://www.analog.com/media/en/training-seminars/tutorials/MT-022.pdf
+
+But instead one bit ( two levels ) i use more bits (0-MAX_LEVELS) Same technology can be used for esp32 high quality sound rendering.
 
 14.04.2022 :
 
