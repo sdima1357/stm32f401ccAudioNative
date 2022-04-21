@@ -31,6 +31,8 @@ minor bugs fixed
 
 optional external i2s module
 
+21.04.2022 :
 
+![image2](https://github.com/sdima1357/stm32f401ccAudioNative/blob/main/images/schematic.png?raw=true)
 
 
