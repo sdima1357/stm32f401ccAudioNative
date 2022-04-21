@@ -34,6 +34,6 @@ optional external i2s module
 21.04.2022 :
 Change to open drain timer1 PWM outputs( PA8 PA9 ) config for better noise supression.
 
-![image2](https://github.com/sdima1357/stm32f401ccAudioNative/blob/main/images/schematic.png?raw=true)
+![image2](https://github.com/sdima1357/stm32f401ccAudioNative/blob/main/images/schematic1.png?raw=true)
 
 
