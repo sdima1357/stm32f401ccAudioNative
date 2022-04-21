@@ -39,10 +39,11 @@ unsigned char *getImageData();
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+//**********************start user define************!!!!!
 // cpu clock 84 for stm32f401
 #define SYS_CLK_MHZ 84
 // use internal timers for sound out
-//#define USE_PWM
+#define USE_PWM
 
 // from 0 to 2 SPI LCD
 #define NUMBER_OF_LCD 1
@@ -52,7 +53,7 @@ unsigned char *getImageData();
 
 // integration order 1 or 2
 //#define ORDER 1
-#define ORDER 2
+#define ORDER 1
 
 
 // if disabled - direct output (order 0)
@@ -61,12 +62,14 @@ unsigned char *getImageData();
 // if enabled - use bilinear interpolation
 #define BILINEAR
 
+//**********************end user define area************!!!!!!!!
+
 
 #ifdef  USE_PWM
 #define MAX_LEVELS (SYS_CLK_MHZ*1000000/44100)
-#ifdef  SIGMA_DELTA
 #define MAX_VOL (((int)(MAX_LEVELS/SFACT))&~1)
-#define SFACT 2.3
+#ifdef  SIGMA_DELTA
+#define SFACT 3.1
 #else
 #define SFACT 1.0
 #endif
@@ -89,7 +92,7 @@ unsigned char *getImageData();
 int16_t baudio_buffer[ASBUF_SIZE];
 
 
-#define TIME_BIT_SCALE_FACT 19u
+#define TIME_BIT_SCALE_FACT 18u
 #define TIME_SCALE_FACT     (1u<<TIME_BIT_SCALE_FACT)
 
 // bilinear is more precision
@@ -194,9 +197,10 @@ void init_timers()
 
 	  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH1);
 	  LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH2);
-#if 0
+
 	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
 	  LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH2N);
+#if 0
 	  //LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1,LL_TIM_OCPOLARITY_HIGH);
 	  //LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1N,LL_TIM_OCPOLARITY_LOW);
 	  LL_TIM_OC_SetPolarity(TIM1, LL_TIM_CHANNEL_CH1,LL_TIM_OCPOLARITY_HIGH);
@@ -363,6 +367,7 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 	if(!usb_SndBuffer) return ;
 	int cPos  = (pBuffer - (uint16_t*)usb_SndBuffer)/2;
 
+#if (NUMBER_OF_LCD>0)
 	for(int s=0;s<Size/4;s++)
 	{
 		int16_t LL = pBuffer[s*2];
@@ -376,6 +381,7 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 			ampR = RR;
 		}
 	}
+#endif
 
 	if(cPos==0)
 	{
@@ -391,21 +397,20 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 
 		//where i am ?
 
-		int approximateSamplesOutedFromLastDMA  = ((int)timeFromLastDMA)*outDmaSpeedScaled/TIME_SCALE_FACT;
+		int approximateSamplesOutedFromLastDMA  = ((float)timeFromLastDMA)*outDmaSpeedScaled/TIME_SCALE_FACT;
 
 		int appDistance  =  (int)(lastDmaPos + approximateSamplesOutedFromLastDMA )-cPos;
 
-        float  speedFact =  (((float)timeForRecivedSamples) * outDmaSpeedScaled)/TIME_SCALE_FACT;
-
-        sForcedSpeed  = (int)(((float)samplesInBuff)*TIME_SCALE_FACT / speedFact);
 
         if(UsbSamplesAvail)
 		{
 			int dC = appDistance - prevPos;
 			while(dC>samplesInBuffH)  dC-=samplesInBuff;
 			while(dC<-samplesInBuffH) dC+=samplesInBuff;
-			if(dC > samplesInBuffH/16 || dC<-samplesInBuffH/16 ) //seems completely lost sync , force set frequency
+			if(dC > samplesInBuffH/8 || dC<-samplesInBuffH/8 ) //seems completely lost sync , force set frequency
 			{
+		        float  speedFact =  (((float)timeForRecivedSamples) * outDmaSpeedScaled)/TIME_SCALE_FACT;
+		        sForcedSpeed  = (int)(((float)samplesInBuff)*TIME_SCALE_FACT / speedFact);
 				readSpeedXScaled = sForcedSpeed;
 			}
 			else
@@ -470,11 +475,19 @@ void AUDIO_OUT_ChangeBuffer(uint16_t *pBuffer, uint16_t Size)
 }
 void cleanAudioBuffer()
 {
+#ifdef PWM
 	for(int k=0;k<N_SIZE;k++)
 	{
 		VoiceBuff0[k] = MAX_VOL/2;
 		VoiceBuff1[k] = MAX_VOL/2;
 	}
+#else
+	for(int k=0;k<N_SIZE;k++)
+	{
+		VoiceBuff0[k] = 0;
+		VoiceBuff1[k] = 0;
+	}
+#endif
 }
 
 struct sigmaDeltaStorage
@@ -546,7 +559,7 @@ float sigma_delta2(struct sigmaDeltaStorage2* st,float x)
 
 int sigma_delta_SCALED(struct sigmaDeltaStorage_SCALED* st,int x_SCALED)
 {
-	st->integral+= x_SCALED - st->y*SIGMA;
+	st->integral+= x_SCALED - st->y*SIGMA; //post diff
 	st->y		 =(st->integral+SIGMA/2)/SIGMA;
 	if(st->y < 0)
 		st->y = 0;
@@ -832,18 +845,11 @@ int main(void)
 		  LCD_setRotation(PORTRAIT_FLIP);
 		  {
 				uint32_t trt = HAL_GetTick();
-				int k;
-				for(int k=0;k<1;k++)
-				{
-					LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(), rand());
-				}
-				trt = (HAL_GetTick()-trt);
-
-				char txt[0x20];
-
-				sprintf(txt,"SCR_FULL %d uS\n",trt*1000);
-				printf("%s",txt);
+				//LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(), rand());
 				LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
+				trt = (HAL_GetTick()-trt);
+				printf("SCR_FULL %d uS\n",trt*1000);
+
 		  }
 	  }
 #endif
@@ -853,6 +859,7 @@ int main(void)
   int pcY_OLD[2]={-1,-1};
   float elapsed_time = 0;
   int  elapsed_time_ticks = 0;
+  int32_t prev_tick = 0;
   int  mode = 0;
   /* USER CODE END 2 */
 
@@ -897,12 +904,19 @@ int main(void)
 			 HAL_Delay(1000);
 		 }
 	  }
-		ampL = (ampL*15)/(16);
-		ampR = (ampR*15)/(16);
+		//ampL = (ampL*15)/(16);
+		//ampR = (ampR*15)/(16);
 	  if(mode==0)
 	  {
 			//LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
 		    uint32_t trt = HAL_GetTick();
+		    int deltaTicks = trt - prev_tick;
+		    //300 millisecond
+#define decayFact (-1.0f/300)
+		    float decay = expf(deltaTicks*decayFact);
+		    ampL =ampL*decay;
+		    ampR =ampR*decay;
+		    prev_tick = trt;
 
 		    for(int l=0;l<NUMBER_OF_LCD;l++)
 		    {
@@ -1067,7 +1081,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
   hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1237,7 +1251,7 @@ static void MX_TIM1_Init(void)
   GPIO_InitStruct.Pin = LL_GPIO_PIN_8|LL_GPIO_PIN_9;
   GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
   GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
-  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
   GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
   GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
   LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
