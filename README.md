@@ -2,9 +2,7 @@
 stm32 black pill usb sound card
 last one: 
 
-https://www.youtube.com/watch?v=-ZwYmrN618s
 
-old:
 
 https://www.youtube.com/watch?v=0MmWp3HdV2A
 
