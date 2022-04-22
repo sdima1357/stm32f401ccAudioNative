@@ -278,7 +278,11 @@ int16_t * usb_SndBuffer        = 0;
 
 uint32_t  samplesInBuffScaled  = 0;
 uint32_t  readPositionXScaled  = 0;  //readPosition<<12;
+#ifdef USE_PWM
 uint32_t  readSpeedXScaled     = 1.01*TIME_SCALE_FACT*(48000.0/(44100*SFACT));
+#else
+uint32_t  readSpeedXScaled     = TIME_SCALE_FACT;
+#endif
 
 
 struct LR
@@ -634,13 +638,16 @@ struct sigmaDeltaStorage2_SCALED static_R_channel2_SCALED;
 
 int tfl_mean[3];
 int pnt_mean = 0;
-
-void TIM1_TC1()
+void checkTime()
 {
 	uint16_t prevTime;
 	uint16_t  tfl;
 	prevTime = lastDmaAccessTime;
 	lastDmaAccessTime = TIM3->CNT;
+	//lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
+	//tfl = lastDmaAccessTime -prevTime;
+	//outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(tfl);
+
 	lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
 	tfl      = lastDmaAccessTime -prevTime;
 
@@ -653,6 +660,12 @@ void TIM1_TC1()
 
 
 	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(mean);
+}
+
+void TIM1_TC1()
+{
+
+    checkTime();
     if(UsbSamplesAvail > N_SIZE/2)
     {
     	UsbSamplesAvail -= N_SIZE/2;
@@ -767,9 +780,7 @@ void TIM1_HT1()
 }
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
 {
-	//fl = 0;
-	uint16_t prevTime;
-	uint16_t  tfl;
+    checkTime();
     if(UsbSamplesAvail > N_SIZE/2)
     {
     	UsbSamplesAvail -= N_SIZE/2;
@@ -779,11 +790,7 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
     	UsbSamplesAvail = 0;
     }
 
-	prevTime = lastDmaAccessTime;
-	lastDmaAccessTime = TIM3->CNT;
-	lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
-	tfl = lastDmaAccessTime -prevTime;
-	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(tfl);
+
 
 	TransferComplete_CallBack_FS_Counter++;
     struct LR * bfr = ((struct LR *) baudio_buffer)+ASBUF_SIZE/4;
@@ -1306,6 +1313,7 @@ static void MX_TIM1_Init(void)
   GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
   GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
   GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
+ // GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
   GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
   GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
   LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
