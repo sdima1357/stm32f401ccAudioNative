@@ -53,7 +53,7 @@ unsigned char *getImageData();
 
 // integration order 1 or 2
 //#define ORDER 1
-#define ORDER 1
+#define ORDER 2
 
 
 // if disabled - direct output (order 0)
@@ -64,12 +64,12 @@ unsigned char *getImageData();
 
 //**********************end user define area************!!!!!!!!
 
-
+#define TIMER_CLOCK_FREQ 400000.0f
 #ifdef  USE_PWM
 #define MAX_LEVELS (SYS_CLK_MHZ*1000000/44100)
 #define MAX_VOL (((int)(MAX_LEVELS/SFACT))&~1)
 #ifdef  SIGMA_DELTA
-#define SFACT 3.1
+#define SFACT 3.3
 #else
 #define SFACT 1.0
 #endif
@@ -91,7 +91,7 @@ unsigned char *getImageData();
 #define ASBUF_SIZE     (N_SIZE*2)
 int16_t baudio_buffer[ASBUF_SIZE];
 
-
+// between [14  20]
 #define TIME_BIT_SCALE_FACT 18u
 #define TIME_SCALE_FACT     (1u<<TIME_BIT_SCALE_FACT)
 
@@ -165,7 +165,7 @@ void TIM1_TE2()
 void init_timers()
 {
 
-	  TIM1->ARR = MAX_VOL+1;
+	  TIM1->ARR = MAX_VOL-1;
 	  LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA2);
 	  LL_DMA_ConfigAddresses(DMA2, LL_DMA_STREAM_1, (uint32_t)&VoiceBuff0[0], (uint32_t)&TIM1->CCR1, LL_DMA_GetDataTransferDirection(DMA2, LL_DMA_STREAM_1));
 	  LL_DMA_SetDataLength(DMA2, LL_DMA_STREAM_1, N_SIZE);
@@ -358,14 +358,98 @@ int       lastDmaPos;
 uint32_t   outDmaSpeedScaled;
 int       sForcedSpeed;
 uint16_t  lastAudioUsbTimeStamp;
+float inputSpeed = 0;
 
 int prevPos = -1 ;
+
+int  median3(int  a, int  b, int  c)
+{
+   return (b<a)
+              ?   (b<c)  ?  (c<a) ? c : a  :  b
+              :   (a<c)  ?  (c<b) ? c : b  :  a;
+}
+
+int timeForRecivedSamples_mean[3];
+int pnt_timeForRecivedSamples_mean = 0;
+int appDistErr = 0;
+
 
 void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 {
 	AUDIO_PeriodicTC_FS_Counter++;
 	if(!usb_SndBuffer) return ;
 	int cPos  = (pBuffer - (uint16_t*)usb_SndBuffer)/2;
+	uint16_t lastAudioUsbTimeStampNew = TIM3->CNT;
+	if(cPos==0)
+	{
+		uint16_t timeForRecivedSamples = lastAudioUsbTimeStampNew - lastAudioUsbTimeStamp;
+
+		timeForRecivedSamples_mean [pnt_timeForRecivedSamples_mean++] = timeForRecivedSamples;
+		if(pnt_timeForRecivedSamples_mean>2)pnt_timeForRecivedSamples_mean = 0;
+
+
+        lastAudioUsbTimeStamp = lastAudioUsbTimeStampNew;
+
+	}
+
+	if(cPos==0)
+	{
+
+		//
+
+
+		int  timeForRecivedSamples = median3(timeForRecivedSamples_mean[0],timeForRecivedSamples_mean[1],timeForRecivedSamples_mean[2]);
+		//(TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT;
+		if(timeForRecivedSamples)
+			inputSpeed = samplesInBuff*TIMER_CLOCK_FREQ/timeForRecivedSamples;
+
+
+		//sForcedSpeed = (int)(samplesInBuff*TIME_SCALE_FACT*mean/(timeForRecivedSamples*N_SIZE);
+
+		uint16_t timeFromLastDMA = lastAudioUsbTimeStampNew - lastDmaAccessTime;
+
+
+		//where i am ?
+
+		int approximateSamplesOutedFromLastDMA  = ((float)timeFromLastDMA/TIMER_CLOCK_FREQ)*inputSpeed;
+
+
+
+		int appDistance  =  (int)(lastDmaPos + approximateSamplesOutedFromLastDMA )-cPos;
+		if(appDistance    < 0 ) appDistance += samplesInBuff;
+		//while(appDistance > samplesInBuff)  appDistance -= samplesInBuff;
+		int err = appDistance - samplesInBuffH;
+
+
+        if(UsbSamplesAvail)
+		{
+        	if(timeForRecivedSamples)
+        	{
+				int dC = appDistance - prevPos;
+				while(dC>samplesInBuffH)  dC-=samplesInBuff;
+				while(dC<-samplesInBuffH) dC+=samplesInBuff;
+				appDistErr = err;
+				if(err > samplesInBuffH/2 || err <-samplesInBuffH/2 ) //seems completely lost sync , force set frequency
+				{
+					float outSpeed = (TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT;
+					sForcedSpeed = (int)(inputSpeed*TIME_SCALE_FACT/outSpeed);
+					readSpeedXScaled = sForcedSpeed;
+					readPositionXScaled = samplesInBuffScaled/2;
+				}
+				else
+				{
+					//ok - only phase tune
+					readSpeedXScaled -= dC + err/256;// + 8*err/samplesInBuff ;//- ((err>0)?1:(err<0)?-1:0);
+				}
+        	}
+		}
+        else
+        {
+        	readPositionXScaled = samplesInBuffScaled/2;
+        }
+		prevPos =  appDistance;
+		UsbSamplesAvail = samplesInBuff*((int)(SFACT+0.5f))*8;
+	}
 
 #if (NUMBER_OF_LCD>0)
 	for(int s=0;s<Size/4;s++)
@@ -382,50 +466,6 @@ void AUDIO_OUT_Periodic(uint16_t* pBuffer, uint32_t Size)
 		}
 	}
 #endif
-
-	if(cPos==0)
-	{
-
-		uint16_t lastAudioUsbTimeStampNew = TIM3->CNT;
-		//
-		uint16_t timeForRecivedSamples = lastAudioUsbTimeStampNew - lastAudioUsbTimeStamp;
-
-        lastAudioUsbTimeStamp = lastAudioUsbTimeStampNew;
-
-		uint16_t timeFromLastDMA = lastAudioUsbTimeStampNew - lastDmaAccessTime;
-
-
-		//where i am ?
-
-		int approximateSamplesOutedFromLastDMA  = ((float)timeFromLastDMA)*outDmaSpeedScaled/TIME_SCALE_FACT;
-
-		int appDistance  =  (int)(lastDmaPos + approximateSamplesOutedFromLastDMA )-cPos;
-
-
-        if(UsbSamplesAvail)
-		{
-			int dC = appDistance - prevPos;
-			while(dC>samplesInBuffH)  dC-=samplesInBuff;
-			while(dC<-samplesInBuffH) dC+=samplesInBuff;
-			if(dC > samplesInBuffH/8 || dC<-samplesInBuffH/8 ) //seems completely lost sync , force set frequency
-			{
-		        float  speedFact =  (((float)timeForRecivedSamples) * outDmaSpeedScaled)/TIME_SCALE_FACT;
-		        sForcedSpeed  = (int)(((float)samplesInBuff)*TIME_SCALE_FACT / speedFact);
-				readSpeedXScaled = sForcedSpeed;
-			}
-			else
-			{
-				//ok - only phase tune
-				readSpeedXScaled-=dC;
-			}
-		}
-        else
-        {
-        	readPositionXScaled = samplesInBuffScaled/2;
-        }
-		prevPos =  appDistance;
-		UsbSamplesAvail = samplesInBuff*((int)SFACT)*8;
-	}
 	return 0;
 }
 
@@ -592,6 +632,8 @@ struct sigmaDeltaStorage2 static_R_channel2;
 struct sigmaDeltaStorage2_SCALED static_L_channel2_SCALED;
 struct sigmaDeltaStorage2_SCALED static_R_channel2_SCALED;
 
+int tfl_mean[3];
+int pnt_mean = 0;
 
 void TIM1_TC1()
 {
@@ -601,7 +643,16 @@ void TIM1_TC1()
 	lastDmaAccessTime = TIM3->CNT;
 	lastDmaPos  = readPositionXScaled>>TIME_BIT_SCALE_FACT;
 	tfl      = lastDmaAccessTime -prevTime;
-	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(tfl);
+
+	tfl_mean[pnt_mean] = tfl;
+	pnt_mean++;
+	if(pnt_mean>2) pnt_mean =0;
+
+    int mean = median3(tfl_mean[0],tfl_mean[1],tfl_mean[2]);
+    if (!mean) mean = 1;
+
+
+	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/(mean);
     if(UsbSamplesAvail > N_SIZE/2)
     {
     	UsbSamplesAvail -= N_SIZE/2;
@@ -810,10 +861,13 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-
+  //0 1 2 3 0
+#if (NUMBER_OF_LCD)
+  LCD_reset();
+#endif
   printf("\nStart program\n");
   cleanAudioBuffer();
-  TIM3->PSC  = SYS_CLK_MHZ*10/4-1;
+  TIM3->PSC  = (int)(SYS_CLK_MHZ*1000000.0f/TIMER_CLOCK_FREQ)-1;
   HAL_TIM_Base_Start(&htim3);
   HAL_StatusTypeDef stat;
 
@@ -835,11 +889,11 @@ int main(void)
   HAL_Delay(100);
 #endif
   printf("Start Speed %x\n",readSpeedXScaled);
-  printf("sSpeed= %x %04d %04d %04d speed=%x\n",sForcedSpeed,HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
+  printf("Freq  = %f,sSpeed= %x %04d %04d %04d speed=%x\n",SYS_CLK_MHZ*1000000.0/(MAX_VOL),sForcedSpeed,HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
 #if (NUMBER_OF_LCD)
-	  LCD_reset();
 	  for(int l=0;l<NUMBER_OF_LCD;l++)
 	  {
+		  printf("Start LCD %d\n",l);
 		  setLCD(l);
 		  LCD_init();
 		  LCD_setRotation(PORTRAIT_FLIP);
@@ -875,7 +929,7 @@ int main(void)
 	  if(timcnt%100==0)
 	  {
 	  // printf("%04d %04d %04d %04d %04d\n",HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,AUDIO_OUT_Play_Counter,AUDIO_OUT_ChangeBuffer_Counter);
-		  printf("MAX_VOL = %d outSpeed=%0.01f Hz %x elaps = %d mS,ForcedSpeed = %x %04d PLLspeed = %x\n",MAX_VOL,(400000.0f*(float)outDmaSpeedScaled)/TIME_SCALE_FACT,outDmaSpeedScaled,elapsed_time_ticks,sForcedSpeed,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
+		  printf("MAX_VOL = %d INSpeed=%0.01f Hz outSpeed=%0.01f Hz %x Delta %d SMPInH %d elaps = %d mS,ForcedSpeed = %x  %04d PLLspeed = %x\n",MAX_VOL,inputSpeed,(TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT,outDmaSpeedScaled,appDistErr,samplesInBuffH,elapsed_time_ticks,sForcedSpeed,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
 
 	  }
 	  if(HAL_GPIO_ReadPin(KEY_GPIO_Port,KEY_Pin)==0 && NUMBER_OF_LCD > 0)
