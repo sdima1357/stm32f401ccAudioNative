@@ -34,8 +34,18 @@ minor bugs fixed
 
 optional external i2s module
 
+
 21.04.2022 :
-Change to open drain timer1 PWM outputs( PA8 PA9 ) config for better noise supression.
+-- Change to open drain timer1 PWM outputs( PA8 PA9 ) config for better noise supression.
+
+27.04.2022
+
+-- pll bug fix
+
+-- up pwm freq to 384KHz
+
+-- add tty output
+
 
 ![image2](https://github.com/sdima1357/stm32f401ccAudioNative/blob/main/images/schematic1.png?raw=true)
 
