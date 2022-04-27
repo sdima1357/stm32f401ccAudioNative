@@ -42,7 +42,7 @@ optional external i2s module
 
 -- pll bug fix
 
--- up pwm freq to 384KHz
+-- up pwm freq to 384KHz - significant sound quality improvment 
 
 -- add tty output
 
