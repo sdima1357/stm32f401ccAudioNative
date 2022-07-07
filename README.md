@@ -48,7 +48,7 @@ optional external i2s module
 
 7.06.2022
 
--- Merge with cdu6
+-- Merge with cdu6 (spdif,pll,int,lcds)
 
 -- add binary(2 lcd & i2s by default) & makefile into Release
 
