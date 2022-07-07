@@ -46,6 +46,12 @@ optional external i2s module
 
 -- add tty output
 
+7.06.2022
+
+-- Merge with cdu6
+
+-- add binary(2 lcd & i2s by default) & makefile into Release
+
 
 ![image2](https://github.com/sdima1357/stm32f401ccAudioNative/blob/main/images/schematic1.png?raw=true)
 
