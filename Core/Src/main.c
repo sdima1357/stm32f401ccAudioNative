@@ -9,10 +9,10 @@
   * <h2><center>&copy; Copyright (c) 2022 STMicroelectronics.
   * All rights reserved.</center></h2>
   *
-  * This software component is licensed by ST under BSD 3-Clause license,
-  * the "License"; You may not use this file except in compliance with the
-  * License. You may obtain a copy of the License at:
-  *                        opensource.org/licenses/BSD-3-Clause
+  * This software component is licensed by ST under Ultimate Liberty license
+  * SLA0044, the "License"; You may not use this file except in compliance with
+  * the License. You may obtain a copy of the License at:
+  *                             www.st.com/SLA0044
   *
   ******************************************************************************
   */
@@ -27,12 +27,10 @@
 #include <stdlib.h>
 #include <math.h>
 #include "st7789.h"
-unsigned char *getImageData();
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 
 /* USER CODE END PTD */
 
@@ -42,19 +40,21 @@ unsigned char *getImageData();
 //**********************start user define************!!!!!
 // cpu clock 84 for stm32f401
 #define SYS_CLK_MHZ 84
+
+//#define EYE
 // use internal timers for sound out
-#define   USE_PWM
-//#define USE_I2S
-//#define USE_SERIAL
+//#define   USE_PWM
+#define USE_I2S
+//#define   USE_SPDIF
 
 
 // from 0 to 2 SPI LCD
-#define NUMBER_OF_LCD 1
+#define NUMBER_OF_LCD 2
 
 //slower for float - faster for integer
 //#define USE_FLOAT_SIGMA
 
-// integration order 1 or 2
+// integration order 0 , 1 or 2
 //#define ORDER 1
 #define ORDER 2
 
@@ -70,7 +70,7 @@ unsigned char *getImageData();
 
 #ifdef  USE_PWM
 #if     (ORDER!=0)
-#define FREQ  (48000*8)
+#define FREQ  (48000*6)
 #define MAX_VOL  (SYS_CLK_MHZ*1000000/FREQ)
 #else
 #define FREQ  (44100)
@@ -78,18 +78,17 @@ unsigned char *getImageData();
 #endif
 #endif
 
-#ifdef  USE_I2S //No PWM, I2S output to external DAC
+#ifdef  USE_I2S  //No PWM, I2S output to external DAC
 #define MAX_VOL (65536)
-#define FREQ   48000
+#define FREQ   (2*96000)
 #endif
 
-#ifdef  USE_SERIAL // sound out to serial
-#define DBL_SAMPL 2
-#define MAX_VOL (1)
-#define FREQ  (48000*4*DBL_SAMPL)
-#else
-#define DBL_SAMPL 1
+#ifdef  USE_SPDIF  //No PWM, I2S output to external DAC
+#define MAX_VOL (65536)
+#define FREQ   (96000/2)
 #endif
+
+#define DBL_SAMPL 1
 
 
 #define SIGMA_BITS  16
@@ -99,8 +98,15 @@ unsigned char *getImageData();
 #define USB_DATA_BITS   16
 #define USB_DATA_BITS_H (USB_DATA_BITS-1)
 
+
+#define SPDIF_FRAMES 192
+#ifdef  USE_SPDIF
+#define N_SIZE      (SPDIF_FRAMES*4)
+#else
 #define N_SIZE_BITS (8)
 #define N_SIZE (1<<N_SIZE_BITS)
+#endif
+
 
 #define ASBUF_SIZE     (N_SIZE*2)
 int16_t baudio_buffer[ASBUF_SIZE];
@@ -132,13 +138,11 @@ DMA_HandleTypeDef hdma_spi2_tx;
 
 SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi3;
-DMA_HandleTypeDef hdma_spi1_tx;
+DMA_HandleTypeDef hdma_spi3_tx;
 
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
-UART_HandleTypeDef huart2;
-DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 
@@ -147,14 +151,13 @@ DMA_HandleTypeDef hdma_usart2_tx;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_USART1_UART_Init(void);
 static void MX_DMA_Init(void);
 static void MX_I2S2_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI3_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_USART1_UART_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -592,13 +595,13 @@ float sigma_delta_slow(struct sigmaDeltaStorage* st,float x)
 struct  sigmaDeltaStorage_SCALED
 {
 	int integral;
-	int y;
+//	int y;
 };
 struct  sigmaDeltaStorage2_SCALED
 {
 	int integral0;
 	int integral1;
-	int y;
+	//int y;
 };
 
 float sigma_delta(struct sigmaDeltaStorage* st,float x)
@@ -625,27 +628,28 @@ float sigma_delta2(struct sigmaDeltaStorage2* st,float x)
 
 int sigma_delta_SCALED(struct sigmaDeltaStorage_SCALED* st,int x_SCALED)
 {
-	st->integral+= x_SCALED - (st->y<<SIGMA_BITS); //post diff
-	//st->y		 =(st->integral+SIGMA/2)/SIGMA;
-	st->y		 =st->integral>>SIGMA_BITS;
-	if(st->y < 0)
-		st->y = 0;
-	if(st->y > MAX_VOL)
-		st->y = MAX_VOL;
-	return st->y;
+	int y		 =st->integral>>SIGMA_BITS;
+	if(y < 0)
+		y = 0;
+	if(y > MAX_VOL)
+		y = MAX_VOL;
+
+	st->integral+= x_SCALED - (y<<SIGMA_BITS);
+	return y;
 }
 
 int sigma_delta2_SCALED(struct sigmaDeltaStorage2_SCALED* st,int x_SCALED)
 {
-	st->integral0+= x_SCALED      - (st->y<<SIGMA_BITS);
-	st->integral1+= st->integral0 - (st->y<<SIGMA_BITS);
+	int y		 =st->integral1>>SIGMA_BITS;
+	if(y < 0)
+		y = 0;
+	if(y > MAX_VOL)
+		y = MAX_VOL;
+
+	st->integral0+= x_SCALED      - (y<<SIGMA_BITS);
+	st->integral1+= st->integral0 - (y<<SIGMA_BITS);
 	//st->y		 =(st->integral1+SIGMA/2)/SIGMA;
-	st->y		 =st->integral1>>SIGMA_BITS;
-	if(st->y < 0)
-		st->y = 0;
-	if(st->y > MAX_VOL)
-		st->y = MAX_VOL;
-	return st->y;
+	return y;
 }
 
 struct sigmaDeltaStorage static_L_channel;
@@ -682,8 +686,11 @@ void checkTime()
     int mean = median3(tfl_mean[0],tfl_mean[1],tfl_mean[2]);
     if (!mean) mean = 1;
 
-
+#ifdef USE_SPDIF
+	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE/4*DBL_SAMPL/(mean);
+#else
 	outDmaSpeedScaled =  TIME_SCALE_FACT*N_SIZE*DBL_SAMPL/(mean);
+#endif
 }
 void readDataTim(int offset)
 {
@@ -719,8 +726,8 @@ void readDataTim(int offset)
 	for(int k=0;k<N_SIZE/2;k++)
 	{
 		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k+offset] =sigma_delta_SCALED(&static_L_channel_SCALED,(MAX_VOL*(tt.L+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
-		VoiceBuff1[k+offset] =sigma_delta_SCALED(&static_R_channel_SCALED,(MAX_VOL*(tt.R+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+		VoiceBuff0[k+offset] =sigma_delta_SCALED(&static_L_channel_SCALED,((MAX_VOL)*(tt.L+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
+		VoiceBuff1[k+offset] =sigma_delta_SCALED(&static_R_channel_SCALED,((MAX_VOL)*(tt.R+(1<<USB_DATA_BITS_H)))>>(USB_DATA_BITS-SIGMA_BITS));
 	}
 #endif
 #if (ORDER==2)
@@ -762,155 +769,59 @@ void TIM1_HT1()
     readDataTim(0);
 }
 
-int     integralL=0;
-int     integralR=0;
-uint16_t sigma_delta_SCALED_01(int*integral,int x_SCALED)
+
+//http://www.hardwarebook.info/S/PDIF
+//https://sigrok.org/wiki/Protocol_decoder:Spdif
+//uint8_t chanel_bit[SPDIF_FRAMES] = {0,0,1,0,0,0};
+uint8_t chanel_bit[SPDIF_FRAMES] = {0,0,0,0,0,0};
+int     last_phase = 0;
+
+uint16_t bitTable[256];
+void makePTable()
 {
-	uint32_t res = 0;
-	for(int t=0;t<16;t++)
+	for(int k=0;k<256;k++)
 	{
-		*integral +=  x_SCALED;
-
-		res <<= 1 ;
-
-        if((*integral)>=73009)
-        {
-        	res |= 1;
-        	(*integral)-= 73009;
-        }
-//		res |= (*integral)&SIGMA?1:0;
-
-		//if(flag) (*integral)-=SIGMA;
-//		(*integral) &= SIGMA-1;
-	}
-	return res;
-}
-
-void readDataSerail(int offset)
-{
-	struct LR tt;
-	for(int k=0;k<N_SIZE/2;k++)
-	{
-		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		VoiceBuff0[k+offset] =sigma_delta_SCALED_01(&integralL,tt.L+(1<<USB_DATA_BITS_H));
-		//VoiceBuff1[k+offset] =sigma_delta_SCALED_01(&integralR,tt.R+(1<<USB_DATA_BITS_H));
+		int flag = 0;
+		uint16_t num =0;
+		for(int bit=0;bit<8;bit++)
+		{
+			int ind = 15-bit*2;
+			if(k&(1<<bit))
+			{
+				num |= (!flag)<<(ind);
+				num |=   flag <<(ind-1);
+			}
+			else
+			{
+				flag= !flag;
+				num |= flag<<(ind);
+				num |= flag<<(ind-1);
+			}
+		}
+		bitTable[k] = num;
 	}
 }
-int integralUL = 0;
-//#define PRIME_NUM 120121
-//#define PRIME_NUM 73009
-//#define PRIME_NUM 71993
-#define PRIME_NUM 69313
-uint8_t sigma_delta_SCALED_5(uint8_t* val,uint32_t *integral,int x_SCALED)
+#define MARKER_B 0b1110100011001100
+#define MARKER_M 0b1110001011001100
+#define MARKER_W 0b1110010011001100
+#define VALIDITY     (28u)
+#define SUB     	 (29u)
+#define CH           (30u)
+#define PARITY       (31u)
+uint32_t parity(uint32_t val)
 {
-	for(int t=0;t<5;t++)
-	{
-		*val>>=1;
-		(*integral) +=  x_SCALED;
-
-		//res >>= 1 ;
-        if((*integral)>=PRIME_NUM)
-        {
-        	*val |= 0x80;
-        	(*integral)-=PRIME_NUM;
-        }
-		//res |= (*integral)&SIGMA;
-		//(*integral) &= SIGMA-1;
-	}
-	return *val;
+	return __builtin_parity(val);
 }
-uint8_t sigma_delta_SCALED_3(uint8_t* val,uint32_t *integral,int x_SCALED)
-{
-	for(int t=0;t<3;t++)
-	{
-		*val>>=1;
-		(*integral) +=  x_SCALED;
-
-		//res >>= 1 ;
-        if((*integral)>=PRIME_NUM)
-        {
-        	*val |= 0x80;
-        	(*integral)-=PRIME_NUM;
-        }
-		//res |= (*integral)&SIGMA;
-		//(*integral) &= SIGMA-1;
-	}
-	return *val;
-}
-uint8_t sigma_delta_SCALED_4(uint8_t* val,uint32_t *integral,int x_SCALED)
-{
-	for(int t=0;t<3;t++)
-	{
-		*val>>=1;
-		(*integral) +=  x_SCALED;
-
-		//res >>= 1 ;
-        if((*integral)>=PRIME_NUM)
-        {
-        	*val |= 0x80;
-        	(*integral)-=PRIME_NUM;
-        }
-		//res |= (*integral)&SIGMA;
-		//(*integral) &= SIGMA-1;
-	}
-	return *val;
-}
-
-void readDataSerail8(int offset)
-{
-	struct LR tt;
-	uint8_t* buff0 = (uint8_t*) VoiceBuff0;
-	for(int k=0;k<N_SIZE/2;k++)
-	{
-		struct LR tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		uint8_t val = 0;
-		sigma_delta_SCALED_4(&val,&integralUL,tt.L+(1<<USB_DATA_BITS_H));
-		tt =getNextSampleLR(/*k+ASBUF_SIZE/4*/);
-		sigma_delta_SCALED_4(&val,&integralUL,tt.L+(1<<USB_DATA_BITS_H));
-		buff0[k+offset] =val;
-	}
-}
-int HAL_SPI_TxCpltCallbackCnt;
-void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-	if(hspi==&hspi1)
-	{
-		HAL_SPI_TxCpltCallbackCnt++;
-    checkTime();
-    if(UsbSamplesAvail > N_SIZE/2)
-    {
-    	UsbSamplesAvail -= N_SIZE/2;
-    }
-    else
-    {
-    	UsbSamplesAvail = 0;
-    }
-    readDataSerail(N_SIZE/2);
-	}
-}
-
-void HAL_SPI_TxHalfCpltCallback(SPI_HandleTypeDef *hspi)
-{
-	if(hspi==&hspi1)
-	{
-    if(UsbSamplesAvail > N_SIZE/2)
-    {
-    	UsbSamplesAvail -= N_SIZE/2;
-    }
-    else
-    {
-    	UsbSamplesAvail = 0;
-    }
-	readDataSerail(0);
-	}
-}
-
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
 {
     checkTime();
-    if(UsbSamplesAvail > N_SIZE/2)
+	int FACTOR= 1;
+#ifdef USE_SPDIF
+	FACTOR= 4;
+#endif
+    if(UsbSamplesAvail > N_SIZE/2/FACTOR)
     {
-    	UsbSamplesAvail -= N_SIZE/2;
+    	UsbSamplesAvail -= N_SIZE/2/FACTOR;
     }
     else
     {
@@ -920,64 +831,161 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
 
 
 	TransferComplete_CallBack_FS_Counter++;
+#ifdef USE_I2S
     struct LR * bfr = ((struct LR *) baudio_buffer)+ASBUF_SIZE/4;
 	for(int k=0;k<ASBUF_SIZE/4;k++)
 	{
 		bfr[k] = getNextSampleLR(/*k+ASBUF_SIZE/4*/);
 
 	}
+#endif
+#ifdef USE_SPDIF
+	uint16_t *bbuf = (uint16_t *)&baudio_buffer[ASBUF_SIZE/2];
+	for(int k=0;k<SPDIF_FRAMES/2;k++)
+	{
+		struct LR lr = getNextSampleLR(/*k*/);
+//		uint32_t lv = ((int)(lr.L)+(1<<USB_DATA_BITS_H))<<(26-USB_DATA_BITS_H);
+//		uint32_t rv = ((int)(lr.R)+(1<<USB_DATA_BITS_H))<<(26-USB_DATA_BITS_H);
+		uint16_t L = lr.L;
+		uint16_t R = lr.R;
+
+		uint32_t lv = ((uint32_t)(L))<<(27-USB_DATA_BITS_H);
+		uint32_t rv = ((uint32_t)(R))<<(27-USB_DATA_BITS_H);
+
+		lv |= (chanel_bit[k+SPDIF_FRAMES/2]<<CH)+(0<<VALIDITY)+(0<<SUB);
+		lv |= parity(lv)<<PARITY;
+		//b
+		{
+			uint16_t nm0 = MARKER_M;
+			if(last_phase) nm0 = ~nm0;
+			last_phase = nm0 & 1;
+			uint16_t nm1 = bitTable[(lv>>(8))&0xff];
+			if(last_phase) nm1 = ~nm1;
+			last_phase = nm1 & 1;
+			uint16_t nm2 = bitTable[(lv>>(16))&0xff];
+			if(last_phase) nm2 = ~nm2;
+			last_phase = nm2 & 1;
+			uint16_t nm3 = bitTable[(lv>>(24))&0xff];
+			if(last_phase) nm3 = ~nm3;
+			last_phase = nm3 & 1;
+
+			bbuf[k*8+0] = nm0;
+			bbuf[k*8+1] = nm1;
+			bbuf[k*8+2] = nm2;
+			bbuf[k*8+3] = nm3;
+		}
+
+		rv |= (chanel_bit[k+SPDIF_FRAMES/2]<<CH)+(0<<VALIDITY)+(0<<SUB);
+		rv |= parity(rv)<<PARITY;
+		{
+			uint16_t nm0 = MARKER_W;
+			if(last_phase) nm0 = ~nm0;
+			last_phase = nm0 & 1;
+			uint16_t nm1 = bitTable[(rv>>(8))&0xff];
+			if(last_phase) nm1 = ~nm1;
+			last_phase = nm1 & 1;
+			uint16_t nm2 = bitTable[(rv>>(16))&0xff];
+			if(last_phase) nm2 = ~nm2;
+			last_phase = nm2 & 1;
+			uint16_t nm3 = bitTable[(rv>>(24))&0xff];
+			if(last_phase) nm3 = ~nm3;
+			last_phase = nm3 & 1;
+
+			bbuf[k*8+4] = nm0;
+			bbuf[k*8+5] = nm1;
+			bbuf[k*8+6] = nm2;
+			bbuf[k*8+7] = nm3;
+		}
+	}
+#endif
+
 }
 
 //void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 {
-    if(UsbSamplesAvail > N_SIZE/2)
+	int FACTOR= 1;
+#ifdef USE_SPDIF
+	FACTOR= 4;
+#endif
+    if(UsbSamplesAvail > N_SIZE/2/FACTOR)
     {
-    	UsbSamplesAvail -= N_SIZE/2;
+    	UsbSamplesAvail -= N_SIZE/2/FACTOR;
     }
     else
     {
     	UsbSamplesAvail = 0;
     }
-	HalfTransfer_CallBack_FS_Counter++;
+
+    HalfTransfer_CallBack_FS_Counter++;
+#ifdef USE_I2S
 	struct LR * bfr = ((struct LR *) baudio_buffer);
 	for(int k=0;k<ASBUF_SIZE/4;k++)
 		bfr[k] = getNextSampleLR(/*k*/);
+#endif
+#ifdef USE_SPDIF
+	uint16_t *bbuf = (uint16_t *)&baudio_buffer[0];
+	for(int k=0;k<SPDIF_FRAMES/2;k++)
+	{
+		struct LR lr = getNextSampleLR(/*k*/);
+//		uint32_t lv = ((int)(lr.L)+(1<<USB_DATA_BITS_H))<<(26-USB_DATA_BITS_H);
+//		uint32_t rv = ((int)(lr.R)+(1<<USB_DATA_BITS_H))<<(26-USB_DATA_BITS_H);
+		uint16_t L = lr.L;
+		uint16_t R = lr.R;
+
+		uint32_t lv = ((uint32_t)(L))<<(27-USB_DATA_BITS_H);
+		uint32_t rv = ((uint32_t)(R))<<(27-USB_DATA_BITS_H);
+
+		lv |= (chanel_bit[k]<<CH)+(0<<VALIDITY)+(0<<SUB);
+		lv |= parity(lv)<<PARITY;
+		//b
+		{
+			uint16_t nm0 = k==0?MARKER_B:MARKER_M;
+			if(last_phase) nm0 = ~nm0;
+			last_phase = nm0 & 1;
+			uint16_t nm1 = bitTable[(lv>>(8))&0xff];
+			if(last_phase) nm1 = ~nm1;
+			last_phase = nm1 & 1;
+			uint16_t nm2 = bitTable[(lv>>(16))&0xff];
+			if(last_phase) nm2 = ~nm2;
+			last_phase = nm2 & 1;
+			uint16_t nm3 = bitTable[(lv>>(24))&0xff];
+			if(last_phase) nm3 = ~nm3;
+			last_phase = nm3 & 1;
+
+			bbuf[k*8+0] = nm0;
+			bbuf[k*8+1] = nm1;
+			bbuf[k*8+2] = nm2;
+			bbuf[k*8+3] = nm3;
+		}
+
+		rv |= (chanel_bit[k]<<CH)+(0<<VALIDITY)+(0<<SUB);
+		rv |= parity(rv)<<PARITY;
+		{
+			uint16_t nm0 = MARKER_W;
+			if(last_phase) nm0 = ~nm0;
+			last_phase = nm0 & 1;
+			uint16_t nm1 = bitTable[(rv>>(8))&0xff];
+			if(last_phase) nm1 = ~nm1;
+			last_phase = nm1 & 1;
+			uint16_t nm2 = bitTable[(rv>>(16))&0xff];
+			if(last_phase) nm2 = ~nm2;
+			last_phase = nm2 & 1;
+			uint16_t nm3 = bitTable[(rv>>(24))&0xff];
+			if(last_phase) nm3 = ~nm3;
+			last_phase = nm3 & 1;
+
+			bbuf[k*8+4] = nm0;
+			bbuf[k*8+5] = nm1;
+			bbuf[k*8+6] = nm2;
+			bbuf[k*8+7] = nm3;
+		}
+	}
+#endif
+
 	//HalfTransfer_CallBack_FS();
 }
 
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
-{
-	if(huart==&huart2)
-	{
-		HAL_SPI_TxCpltCallbackCnt++;
-		checkTime();
-		if(UsbSamplesAvail > N_SIZE/2)
-		{
-			UsbSamplesAvail -= N_SIZE/2;
-		}
-		else
-		{
-			UsbSamplesAvail = 0;
-		}
-        readDataSerail8(N_SIZE/2);
-	}
-}
-void HAL_UART_TxHalfCpltCallback(UART_HandleTypeDef *huart)
-{
-	if(huart==&huart2)
-	{
-		if(UsbSamplesAvail > N_SIZE/2)
-		{
-			UsbSamplesAvail -= N_SIZE/2;
-		}
-		else
-		{
-			UsbSamplesAvail = 0;
-		}
-        readDataSerail8(0);
-	}
-}
 
 void HAL_I2S_ErrorCallback(I2S_HandleTypeDef *hi2s)
 {
@@ -989,6 +997,254 @@ void HAL_I2S_ErrorCallback(I2S_HandleTypeDef *hi2s)
 #define PI 3.14159265358979323846
 #define TAU (2.0 * PI)
 
+int LCD_TYPE = 1;
+//#define LCD_TYPE 1
+//unsigned char* getLCD_Data()
+//{
+//	return (LCD_TYPE==0)?getImageData():getImageDataDual();
+//}
+
+unsigned char* getLCD_Data8()
+{
+	return (LCD_TYPE==0)?getImageData8():getImageDataDual8();
+}
+unsigned char* getLCD_Table16()
+{
+	return (LCD_TYPE==0)?getImageTable16():getImageTableDual16();
+}
+
+vec2f getPixelCenterRot(int channel)
+{
+	if(LCD_TYPE==0)
+	{
+		vec2f pixelCenterRot = {121,167};
+		return pixelCenterRot;
+	}
+	if(channel==0)
+	{
+		vec2f pixelCenterRot = {121,150};
+		return pixelCenterRot;
+	}
+	else
+	{
+		vec2f pixelCenterRot = {121,280};
+		return pixelCenterRot;
+	}
+}
+float getPixelLength(int channel)
+{
+	if(LCD_TYPE==0)
+	{
+		return 102;
+	}
+	if(channel==0)
+	{
+		return 122;
+	}
+	else
+	{
+		return 122;
+	}
+}
+float getAngleAmp()
+{
+	if(LCD_TYPE==0)
+		{
+			return 84;
+		}
+		return 90;
+}
+
+#define EOFS  40
+
+//#ifdef EYE
+uint8_t ftable[(240-EOFS*2)*(240-EOFS*2)];
+uint8_t ctable[256*2];
+//#endif
+
+int satur(int val,int minv,int maxv)
+{
+	return (val<minv)?minv:((val>maxv)?maxv:val);
+}
+struct rgb
+{
+	int R;
+	int G;
+	int B;
+};
+/**
+ * Converts an HSV color value to RGB. Conversion formula
+ * adapted from http://en.wikipedia.org/wiki/HSV_color_space.
+ * Assumes h, s, and v are contained in the set [0, 1] and
+ * returns r, g, and b in the set [0, 255].
+ *
+ * @param   Number  h       The hue
+ * @param   Number  s       The saturation
+ * @param   Number  v       The value
+ * @return  Array           The RGB representation
+ */
+int REF_COLOR =  120;
+struct rgb hsv2rgb(int H,float S,float V)
+{
+	struct rgb dt;
+
+	float h = H/360.0f;
+	float s = S*0.01f;
+	float v = V*0.01f;
+    float r,g,b;
+    int i = floorf(h * 6.0f);
+    float f = h * 6.0f - i;
+    float p = v * (1.0f - s);
+    float q = v * (1.0f - f * s);
+    float t = v * (1.0f - (1.0f - f) * s);
+
+    switch(i % 6){
+        case 0: r = v, g = t, b = p; break;
+        case 1: r = q, g = v, b = p; break;
+        case 2: r = p, g = v, b = t; break;
+        case 3: r = p, g = q, b = v; break;
+        case 4: r = t, g = p, b = v; break;
+        case 5: r = v, g = p, b = q; break;
+    }
+    dt.R = r*255;
+    dt.G = g*255;
+    dt.B = b*255;
+    return dt;
+}
+
+#define EOFS  40
+//#define EOFS  0
+//#define REF_COLOR 160
+//#define REF_COLOR 308
+//#define REF_COLOR 150
+//#define REF_COLOR 165
+
+void paintLevels(float level,int full)
+{
+	struct rgb base_color = hsv2rgb(REF_COLOR,95,30);
+	uint16_t   tc = color_convertRGB_to16d(base_color.R,base_color.G,base_color.B);
+#define RAMP 30
+	int lastPosNS = satur(level*210+RAMP/2+1,0,255+RAMP/2);
+	int lastPos = satur(lastPosNS,RAMP+1,255);
+
+	for(int colorv=lastPos;colorv<256;colorv++)
+	{
+		 ctable[colorv*2+0] = (tc>>8u)&0xffu;
+		 ctable[colorv*2+1] = tc&0xffu;
+	}
+	int df =lastPosNS-lastPos;
+    int offset = lastPosNS*4/100;
+	for(int colorv=1;colorv<lastPos-RAMP;colorv++)
+	{
+		struct rgb base_color = hsv2rgb(REF_COLOR,95,90-offset-1-RAMP);
+		uint16_t   tc = color_convertRGB_to16d(base_color.R,base_color.G,base_color.B);
+		 ctable[colorv*2+0] = (tc>>8u)&0xffu;
+		 ctable[colorv*2+1] = tc&0xffu;
+	}
+	for(int colorv=lastPos-RAMP;colorv<lastPos;colorv++)
+	{
+		struct rgb base_color = hsv2rgb(REF_COLOR,95,90-offset-1+colorv-lastPos);
+		uint16_t   tc = color_convertRGB_to16d(base_color.R,base_color.G,base_color.B);
+		 ctable[colorv*2+0] = (tc>>8u)&0xffu;
+		 ctable[colorv*2+1] = tc&0xffu;
+	}
+	//overshoot
+	if(df>0)
+	{
+		for(int colorv=255-df;colorv<256;colorv++)
+		{
+			int t = colorv-(255-df);
+			struct rgb base_color = hsv2rgb(REF_COLOR,95,100-t-offset);
+			uint16_t   tc = color_convertRGB_to16d(base_color.R,base_color.G,base_color.B);
+			ctable[colorv*2+0] = (tc>>8u)&0xffu;
+			ctable[colorv*2+1] = tc&0xffu;
+		}
+	}
+	if(full)
+	{
+		//LCD_fillRectDataTable(0, 0, LCD_getWidth(), LCD_getHeight(),ftable,ctable);
+		LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(),BLACK);
+		LCD_fillRectDataTable(EOFS, EOFS, LCD_getWidth()-EOFS*2, LCD_getHeight()-EOFS*2,ftable,ctable);
+	}
+	else
+	{
+		LCD_fillRectDataTable(EOFS, EOFS, LCD_getWidth()-EOFS*2, LCD_getHeight()-EOFS*2,ftable,ctable);
+	}
+
+}
+void tableSetup()
+{
+	//http://www.radiostation.ru/home/greeneye.html
+
+     vec2f center = {119.5,119.5 };
+     // normalized base vector up
+     vec2f base =   {0 ,1 };
+     for(int y=EOFS;y<240-EOFS;y++)
+     {
+    	 for(int x=EOFS;x<240-EOFS;x++)
+    	 {
+    		 float dx = (x - center.x);
+    		 float dy = (y - center.y);
+    		 float norma = sqrtf(dx*dx+dy*dy);
+    		 float cosAngle = base.x*dx+base.y*dy;
+    		 float angle = acosf(cosAngle/norma);
+    		 int pos = satur(256*angle/M_PI,1,254)+1;
+    		 if(norma<(240/2-EOFS)&&norma>30)
+    		 {
+    		   ftable[(y-EOFS)*(240-(EOFS*2))+x-EOFS] = pos;
+    		 }
+    		 else
+    		 {
+    			 ftable[(y-EOFS)*(240-(EOFS*2))+x-EOFS] = 0;
+    		 }
+    	 }
+     }
+     int Rca;
+     int Bca;
+     int Gca;
+
+
+}
+void tableSetup1()
+{
+
+     //vec2f center = {119.5,119.5 };
+     vec2f center = {119.5,239.5-EOFS };
+     float xf = 1.0/(120);
+     float yf = 1.0/(240-EOFS*2);
+     float cmin = 1000;
+     float cmax = -1000;
+     // normalized base vector up
+     vec2f base =   {0 ,-1 };
+     for(int y=EOFS;y<240-EOFS;y++)
+     {
+    	 for(int x=EOFS;x<240-EOFS;x++)
+    	 {
+    		 float dx = (x - center.x);
+    		 float dy = (y - center.y);
+    		 float norma = sqrtf(dx*dx+dy*dy);
+    		 float cosAngle = base.x*dx+base.y*dy;
+    		 float angle = acosf(cosAngle/norma)-0.3f*dx*dx*xf*xf;
+    		 int pos = 230.0f-1.25f*fabsf(1024.0f*angle/M_PI-192.0f);
+    		 if(pos<cmin) cmin = pos;
+    		 if(pos>cmax) cmax = pos;
+    		 pos = satur(pos,1,254)+1;
+    		 if(norma<(240-EOFS*2)&&norma>35&&x>EOFS&&x<240-EOFS&&y>EOFS&&y<240-EOFS)
+    		 {
+    		   ftable[(y-EOFS)*(240-(EOFS*2))+x-EOFS] = pos;
+    		 }
+    		 else
+    		 {
+    			 ftable[(y-EOFS)*(240-(EOFS*2))+x-EOFS] = 0;
+    		 }
+    	 }
+     }
+     int Rca;
+     int Bca;
+     int Gca;
+     printf("cmin=%f ,cmax=%f\n",cmin,cmax);
+
+}
 
 /* USER CODE END 0 */
 
@@ -1020,21 +1276,22 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_USART1_UART_Init();
   MX_DMA_Init();
   MX_I2S2_Init();
   MX_SPI1_Init();
   MX_SPI3_Init();
-  MX_USB_DEVICE_Init();
   MX_TIM1_Init();
-  MX_USART1_UART_Init();
   MX_TIM3_Init();
-  MX_USART2_UART_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
   //0 1 2 3 0
 #if (NUMBER_OF_LCD)
   LCD_reset();
 #endif
+
   printf("\nStart program\n");
+  //HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
   cleanAudioBuffer();
   TIM3->PSC  = (int)(SYS_CLK_MHZ*1000000.0f/TIMER_CLOCK_FREQ)-1;
   HAL_TIM_Base_Start(&htim3);
@@ -1050,28 +1307,50 @@ int main(void)
   stat = HAL_I2S_Transmit_DMA(&hi2s2, baudio_buffer,ASBUF_SIZE);
   HAL_Delay(100);
 #endif
-#ifdef  USE_SERIAL
-  //stat = HAL_SPI_Transmit_DMA(&hspi1, VoiceBuff0,N_SIZE);
-
-  HAL_UART_Transmit_DMA(&huart2,VoiceBuff0,N_SIZE);
+#ifdef  USE_SPDIF
+  makePTable();
+  stat = HAL_I2S_Transmit_DMA(&hi2s2, baudio_buffer,ASBUF_SIZE);
   HAL_Delay(100);
 #endif
   printf("Start Speed %x\n",readSpeedXScaled);
   printf("Freq  = %f,sSpeed= %x %04d %04d %04d speed=%x\n",SYS_CLK_MHZ*1000000.0/(MAX_VOL),sForcedSpeed,HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled);
+  int  mode = 1;
 #if (NUMBER_OF_LCD)
 	  for(int l=0;l<NUMBER_OF_LCD;l++)
 	  {
 		  printf("Start LCD %d\n",l);
-		  setLCD(l);
-		  LCD_init();
-		  LCD_setRotation(PORTRAIT_FLIP);
-		  {
-				uint32_t trt = HAL_GetTick();
-				//LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(), rand());
-				LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
-				trt = (HAL_GetTick()-trt);
-				printf("SCR_FULL %d uS\n",trt*1000);
+		  LCD_TYPE = 0;
 
+		  if(LCD_TYPE==0||l==0)
+		  {
+			  setLCD(l);
+			  LCD_init();
+			  LCD_setRotation(PORTRAIT_FLIP);
+			  {
+					uint32_t trt = HAL_GetTick();
+if (mode==3||mode==4)
+{
+			paintLevels(0.0,1);
+}
+else
+{
+	  LCD_setRotation(PORTRAIT_FLIP);
+//	  for(int kkk=0;kkk<20;kkk++)
+//	  {
+//		  LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(),rand());
+//	  }
+//	  LCD_setRotation(PORTRAIT_FLIP);
+//	  for(int kkk=0;kkk<20;kkk++)
+//	  {
+//		  LCD_fillRect(0, 0, LCD_getWidth(), LCD_getHeight(),rand());
+//	  }
+	  LCD_fillRectData8(0, 0, LCD_getWidth(), LCD_getHeight(),getLCD_Data8(),getLCD_Table16());
+			//LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getLCD_Data());
+}
+					trt = (HAL_GetTick()-trt);
+					printf("SCR_FULL %d uS\n",trt*1000);
+
+			  }
 		  }
 	  }
 #endif
@@ -1082,79 +1361,128 @@ int main(void)
   float elapsed_time = 0;
   int  elapsed_time_ticks = 0;
   int32_t prev_tick = 0;
-  int  mode = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  int timcnt =0;
+  //int timcnt =0;
+  int ko = 0;
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  timcnt++;
-	  if(timcnt%100==0)
+	  //timcnt++;
+	  // mode = 0 display off
+	  // mode = 1 display 2 ma
+	  // mode = 2 display  6E5C
+	  // mode = 3 display  6Е1П
+	  REF_COLOR = (((uint16_t)TIM2->CNT)+120)%360;
+	  if(HAL_GetTick()/2048!=ko)
 	  {
+		  ko = HAL_GetTick()/2048;
 	  // printf("%04d %04d %04d %04d %04d\n",HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,AUDIO_OUT_Play_Counter,AUDIO_OUT_ChangeBuffer_Counter);
-		  printf("MAX_VOL = %d INSpeed=%0.01f Hz outSpeed=%0.01f Hz %x Delta %d SMPInH %d elaps = %d mS,ForcedSpeed = %x  %04d PLLspeed = %x %x\n",MAX_VOL,inputSpeed,(TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT,outDmaSpeedScaled,appDistErr,samplesInBuffH,elapsed_time_ticks,sForcedSpeed,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled,HAL_SPI_TxCpltCallbackCnt);
+		  printf("MAX_VOL = %d INSpeed=%0.01f Hz outSpeed=%0.01f Hz %x Delta %d SMPInH %d elaps = %d mS,ForcedSpeed = %x  %04d PLLspeed = %x %01d %07d s=%d \n",MAX_VOL,inputSpeed,(TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT,outDmaSpeedScaled,appDistErr,samplesInBuffH,elapsed_time_ticks,sForcedSpeed,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled,HAL_GPIO_ReadPin(KEY_GPIO_Port,KEY_Pin),TIM2->CNT,UsbSamplesAvail);
 
-	  }
-	  if(HAL_GPIO_ReadPin(KEY_GPIO_Port,KEY_Pin)==0 && NUMBER_OF_LCD > 0)
+  }
+#if   NUMBER_OF_LCD > 0
+	  if(HAL_GPIO_ReadPin(KEY_GPIO_Port,KEY_Pin)==0 )
 	  {
+		 mode = (mode+1)%5;
 		 if(mode==0)
 		 {
 			 HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin,GPIO_PIN_RESET);
    		     LCD_reset();
 			 HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin,GPIO_PIN_RESET);
-   		     HAL_Delay(1000);
-			 mode = 1;
 		 }
-		 else
+		 else if(mode==1)
 		 {
-			 mode = 0;
-
+			  LCD_TYPE = 0;
 			  for(int l=0;l<NUMBER_OF_LCD;l++)
 			  {
 				  pcXe_OLD[l] = -1;
+				  if(LCD_TYPE==0||l==0)
+				  {
 				  setLCD(l);
 				  LCD_init();
 				  LCD_setRotation(PORTRAIT_FLIP);
-				  LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
+				  //LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getLCD_Data());
+				  LCD_fillRectData8(0, 0, LCD_getWidth(), LCD_getHeight(),getLCD_Data8(),getLCD_Table16());
+				  }
 			  }
 			 HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin,GPIO_PIN_SET);
-			 HAL_Delay(1000);
 		 }
+		 else if(mode==2)
+		 {
+			  LCD_TYPE = 1;
+			  for(int l=0;l<NUMBER_OF_LCD;l++)
+			  {
+				  pcXe_OLD[l] = -1;
+				  if(LCD_TYPE==0||l==0)
+				  {
+				  setLCD(l);
+				  LCD_init();
+				  LCD_setRotation(PORTRAIT_FLIP);
+				  //LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getLCD_Data());
+				  LCD_fillRectData8(0, 0, LCD_getWidth(), LCD_getHeight(),getLCD_Data8(),getLCD_Table16());
+				  }
+			  }
+			 HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin,GPIO_PIN_SET);
+		 }
+		 else if(mode==3)
+		 {
+			tableSetup();
+			paintLevels(0.0,1);
+
+		 }
+		 else if(mode==4)
+		 {
+			  tableSetup1();
+			  paintLevels(0.0,1);
+		 }
+		 HAL_Delay(100);
 	  }
 		//ampL = (ampL*15)/(16);
 		//ampR = (ampR*15)/(16);
-	  if(mode==0)
+	  if(mode!=0)
 	  {
 			//LCD_fillRectData(0, 0, LCD_getWidth(), LCD_getHeight(),getImageData());
 		    uint32_t trt = HAL_GetTick();
 		    int deltaTicks = trt - prev_tick;
-		    //300 millisecond
-#define decayFact (-1.0f/300)
-		    float decay = expf(deltaTicks*decayFact);
 		    prev_tick = trt;
-
+		    //300 millisecond
+//#define decayFact (-1.0f/300)
+#define decayFact (-1.0f/600)
+#define OVER_AMPL   1.5f
+		float decay = expf(deltaTicks*decayFact);
+		if(mode==3||mode==4)
+		{
+			float factMaxInputEnergy_inv = OVER_AMPL/((1<<USB_DATA_BITS_H)*2/sqrt(2));
+			float ampl = (ampR+ampL)*0.5f*factMaxInputEnergy_inv;
+			ampl = logf(ampl*(expf(1.0f)-1.0f)+1.0f);
+			//if(ampl>1.0f) ampl = 1.0f;
+		    paintLevels(ampl*1.0f,0);
+		}
+		else
+		{
 		    for(int l=0;l<NUMBER_OF_LCD;l++)
 		    {
-		    	setLCD(l);
-		    	vec2f pixelCenterRot = {121,167};
-		    	float arrowLength  = 102;
+		    	if(LCD_TYPE==0||l==0)
+		    		setLCD(l);
+
+		    	vec2f pixelCenterRot = getPixelCenterRot(l);
+		    	float arrowLength  = getPixelLength(l);
 				vec2f vc = {arrowLength,0.0f};
 				mat4f mt;
-#define OVER_AMPL   1.5f
 				float factMaxInputEnergy_inv = OVER_AMPL/((1<<USB_DATA_BITS_H)*2/sqrt(2));
-				float ampl = ((l==0)?ampR:ampL)* factMaxInputEnergy_inv;
-#if (NUMBER_OF_LCD==1)
+				float ampl = ((l==0)?ampL:ampR)* factMaxInputEnergy_inv;
+#if (NUMBER_OF_LCD==1 && LCD_TYPE==0)
 					ampl = (ampR+ampL)*0.5f*factMaxInputEnergy_inv;
 #endif
 				ampl = logf(ampl*(expf(1.0f)-1.0f)+1.0f);
 				if(ampl>1.0f) ampl = 1.0f;
 				//if(ampl<0.0f) ampl = 0.0f;
-#define         ANGLE_AMP  84
+				float ANGLE_AMP = getAngleAmp();
 				makeRotMat(mt,(90+ANGLE_AMP/2-ANGLE_AMP*ampl)/180*((float)M_PI));
 				vec2f vcA = applyMat(mt,vc);
 				//printMat(mt);
@@ -1164,26 +1492,43 @@ int main(void)
 				int pcY = pixelCenterRot.y;
 				int pcXe = (int)(pcX+vcA.x);  //arrowEnd
 				int pcYe = (int)(pcY-vcA.y);  //arrowEnd
-				int pcXs = (int)(pcX+vcA.x*0.22f);//arrowStart
-				int pcYs = (int)(pcY-vcA.y*0.22f);//arrowStart
+
+				int pcXs = (int)(pcX+vcA.x*(LCD_TYPE==0?0.22f:0.35f));//arrowStart
+				int pcYs = (int)(pcY-vcA.y*(LCD_TYPE==0?0.22f:0.35f));//arrowStart
 				//if(!(pcXe_OLD[l] == pcXe && pcYe_OLD[l] == pcYe))
 				{
 					if(pcXe_OLD[l]>0)
 					{
-						LCD_Draw_LinePNX(pcX_OLD[l]-2-5,pcY_OLD[l],pcXe_OLD[l]-2-5,pcYe_OLD[l],240,4,getImageData());
-						LCD_Draw_LinePNX(pcX_OLD[l]-2,pcY_OLD[l],pcXe_OLD[l]-2,pcYe_OLD[l],240,4,getImageData());
+						//LCD_Draw_LinePNX(pcX_OLD[l]-2-5,pcY_OLD[l],pcXe_OLD[l]-2-5,pcYe_OLD[l],240,4,getLCD_Data());
+						//LCD_Draw_LinePNX(pcX_OLD[l]-2,pcY_OLD[l],pcXe_OLD[l]-2,pcYe_OLD[l],240,4,getLCD_Data());
+
+						LCD_Draw_LinePNX8(pcX_OLD[l]-2-5,pcY_OLD[l],pcXe_OLD[l]-2-5,pcYe_OLD[l],240,4,getLCD_Data8(),getLCD_Table16());
+						LCD_Draw_LinePNX8(pcX_OLD[l]-2,pcY_OLD[l],pcXe_OLD[l]-2,pcYe_OLD[l],240,4,getLCD_Data8(),getLCD_Table16());
+
+
 					}
 					if(pcXe_OLD[l]>0)
 					{
 					}
-					LCD_Draw_LinePNXShadow(pcXs-2-5,pcYs,pcXe-2-5,pcYe,240,4,getImageData());
+					//LCD_Draw_LinePNXShadow(pcXs-2-5,pcYs,pcXe-2-5,pcYe,240,4,getLCD_Data());
+					LCD_Draw_LinePNXShadow8(pcXs-2-5,pcYs,pcXe-2-5,pcYe,240,4,getLCD_Data8(),getLCD_Table16());
 					//LCD_Draw_LinePNX(pcXs-2-5,pcYs,pcXe-2-5,pcYe,240,4,getImageDarkData());
 
 					uint16_t colors [4];
+					if(LCD_TYPE==0||1)
+					{
 					colors[0] = color_convertRGB_to16d(0x3e + 20,0x27 + 20,0x2f + 20);
 					colors[1] = color_convertRGB_to16d(0xd1/2,0x26/2,0x64/2);
 					colors[2] = color_convertRGB_to16d(0xd1,0x26,0x64);
 					colors[3] = color_convertRGB_to16d(0x3e,0x27,0x2f);
+					}
+					else
+					{
+						colors[0] = color_convertRGB_to16d(0x3e + 20,0x27 + 20,0x2f + 20);
+						colors[1] = color_convertRGB_to16d(38,38,41);
+						colors[2] = color_convertRGB_to16d(38,38,41);
+						colors[3] = color_convertRGB_to16d(0x3e,0x27,0x2f);
+					}
 					LCD_Draw_LineNX(pcXs-2,pcYs,pcXe-2,pcYe,4,(uint8_t*) colors);
 				}
 
@@ -1197,15 +1542,17 @@ int main(void)
 				 pcXe_OLD[l] = pcXe;
 				 pcYe_OLD[l] = pcYe;
 		    }
-		    ampL =ampL*decay;
-		    ampR =ampR*decay;
-		    elapsed_time_ticks = HAL_GetTick() - trt;
 			//printf(txt,"%03d %03d\n",ampL,ampR);
 			//LCD_Draw_Text(txt,0,0,GREEN, 2,BLACK);
+		}
+		elapsed_time_ticks = HAL_GetTick() - trt;
+		HAL_Delay(30);
+		ampL =ampL*decay;
+		ampR =ampR*decay;
 	  }
-	  HAL_Delay(20);
-
   }
+  HAL_Delay(2);
+#endif
   /* USER CODE END 3 */
 }
 
@@ -1272,7 +1619,7 @@ static void MX_I2S2_Init(void)
   hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
   hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
   hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
-  hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_48K;
+  hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_192K;
   hi2s2.Init.CPOL = I2S_CPOL_LOW;
   hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
   hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
@@ -1305,7 +1652,7 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_16BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
   hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
@@ -1402,7 +1749,13 @@ static void MX_TIM1_Init(void)
 
   LL_DMA_SetMemorySize(DMA2, LL_DMA_STREAM_1, LL_DMA_MDATAALIGN_HALFWORD);
 
-  LL_DMA_DisableFifoMode(DMA2, LL_DMA_STREAM_1);
+  LL_DMA_EnableFifoMode(DMA2, LL_DMA_STREAM_1);
+
+  LL_DMA_SetFIFOThreshold(DMA2, LL_DMA_STREAM_1, LL_DMA_FIFOTHRESHOLD_FULL);
+
+  LL_DMA_SetMemoryBurstxfer(DMA2, LL_DMA_STREAM_1, LL_DMA_MBURST_INC8);
+
+  LL_DMA_SetPeriphBurstxfer(DMA2, LL_DMA_STREAM_1, LL_DMA_PBURST_SINGLE);
 
   /* TIM1_CH2 Init */
   LL_DMA_SetChannelSelection(DMA2, LL_DMA_STREAM_2, LL_DMA_CHANNEL_6);
@@ -1421,14 +1774,20 @@ static void MX_TIM1_Init(void)
 
   LL_DMA_SetMemorySize(DMA2, LL_DMA_STREAM_2, LL_DMA_MDATAALIGN_HALFWORD);
 
-  LL_DMA_DisableFifoMode(DMA2, LL_DMA_STREAM_2);
+  LL_DMA_EnableFifoMode(DMA2, LL_DMA_STREAM_2);
+
+  LL_DMA_SetFIFOThreshold(DMA2, LL_DMA_STREAM_2, LL_DMA_FIFOTHRESHOLD_FULL);
+
+  LL_DMA_SetMemoryBurstxfer(DMA2, LL_DMA_STREAM_2, LL_DMA_MBURST_INC8);
+
+  LL_DMA_SetPeriphBurstxfer(DMA2, LL_DMA_STREAM_2, LL_DMA_PBURST_SINGLE);
 
   /* USER CODE BEGIN TIM1_Init 1 */
 
   /* USER CODE END TIM1_Init 1 */
   TIM_InitStruct.Prescaler = 0;
   TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
-  TIM_InitStruct.Autoreload = 1904;
+  TIM_InitStruct.Autoreload = 65535;
   TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
   TIM_InitStruct.RepetitionCounter = 0;
   LL_TIM_Init(TIM1, &TIM_InitStruct);
@@ -1480,7 +1839,7 @@ static void MX_TIM1_Init(void)
   GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
   GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
   GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_OPENDRAIN;
-  GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+  GPIO_InitStruct.Pull = LL_GPIO_PULL_UP;
   GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
   LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
@@ -1505,7 +1864,7 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 210-1 ;
+  htim3.Init.Prescaler = 840/4-1;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -1565,64 +1924,28 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART2_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 1500000;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
-}
-
-/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
 {
 
   /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
-  /* DMA1_Stream6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   /* DMA2_Stream1_IRQn interrupt configuration */
   NVIC_SetPriority(DMA2_Stream1_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
   NVIC_EnableIRQ(DMA2_Stream1_IRQn);
   /* DMA2_Stream2_IRQn interrupt configuration */
   NVIC_SetPriority(DMA2_Stream2_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
   NVIC_EnableIRQ(DMA2_Stream2_IRQn);
-  /* DMA2_Stream3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
 
 }
 
@@ -1648,10 +1971,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, LCD1_CMD_Pin|DUMMY_OUT_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(MUTE_OUT_GPIO_Port, MUTE_OUT_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LCD_CMD_Pin|LCD_RESET_Pin|LCD_BL_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, MUTE_OUT_Pin|LCD_CMD_Pin|LCD_RESET_Pin|LCD_BL_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : LED_Pin */
   GPIO_InitStruct.Pin = LED_Pin;
@@ -1666,33 +1986,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(KEY_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LCD1_CMD_Pin */
-  GPIO_InitStruct.Pin = LCD1_CMD_Pin;
+  /*Configure GPIO pins : LCD1_CMD_Pin DUMMY_OUT_Pin */
+  GPIO_InitStruct.Pin = LCD1_CMD_Pin|DUMMY_OUT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(LCD1_CMD_GPIO_Port, &GPIO_InitStruct);
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : MUTE_OUT_Pin LCD_RESET_Pin LCD_BL_Pin */
-  GPIO_InitStruct.Pin = MUTE_OUT_Pin|LCD_RESET_Pin|LCD_BL_Pin;
+  /*Configure GPIO pins : MUTE_OUT_Pin LCD_CMD_Pin LCD_RESET_Pin LCD_BL_Pin */
+  GPIO_InitStruct.Pin = MUTE_OUT_Pin|LCD_CMD_Pin|LCD_RESET_Pin|LCD_BL_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : DUMMY_OUT_Pin */
-  GPIO_InitStruct.Pin = DUMMY_OUT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(DUMMY_OUT_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : LCD_CMD_Pin */
-  GPIO_InitStruct.Pin = LCD_CMD_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(LCD_CMD_GPIO_Port, &GPIO_InitStruct);
 
 }
 

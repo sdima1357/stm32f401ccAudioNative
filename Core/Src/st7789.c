@@ -46,7 +46,7 @@
 extern SPI_HandleTypeDef hspi3;
 extern SPI_HandleTypeDef hspi1;
 
-volatile SPI_HandleTypeDef SPIH;
+volatile SPI_HandleTypeDef * SPIH;
 //#define SPIH hspi3
 
 //#define LCD_DC_0   LCD_CMD_GPIO_Port->BSRR = LCD_CMD_Pin<<16;
@@ -61,7 +61,7 @@ volatile uint32_t  Cmd_Pin;
 #define LCD_DC_1   {SPI_BSY;Cmd_Port->BSRR = Cmd_Pin;}
 
 
-void setSPI(SPI_HandleTypeDef spi_inp, GPIO_TypeDef *cmd_port,uint32_t cmd_pin)
+void setSPI(SPI_HandleTypeDef* spi_inp, GPIO_TypeDef *cmd_port,uint32_t cmd_pin)
 {
 	SPIH = spi_inp;
 	Cmd_Port = cmd_port;
@@ -90,12 +90,12 @@ void setLCD(int num)
 		}
 		if(num==0)
 		{
-			setSPI(hspi3,LCD_CMD_GPIO_Port,LCD_CMD_Pin);
+			setSPI(&hspi3,LCD_CMD_GPIO_Port,LCD_CMD_Pin);
 			//setSPI(hspi1,LCD_CMD_GPIO_Port,LCD_CMD_Pin);
 		}
 		else
 		{
-			setSPI(hspi1,LCD1_CMD_GPIO_Port,LCD1_CMD_Pin);
+			setSPI(&hspi1,LCD1_CMD_GPIO_Port,LCD1_CMD_Pin);
 		}
 		oldNum = num;
 	}
@@ -115,7 +115,7 @@ void setLCD(int num)
 
 
 #define SpixTimeout 1000
-#define SPIx_WriteF(Value)  { while(((SPIH.Instance->SR) & SPI_FLAG_TXE) != SPI_FLAG_TXE){} *((__IO uint8_t*)&SPIH.Instance->DR) = Value; }
+#define SPIx_WriteF(Value)  { while(((SPIH->Instance->SR) & SPI_FLAG_TXE) != SPI_FLAG_TXE){} *((__IO uint8_t*)&SPIH->Instance->DR) = Value; }
 /*
 void SPIx_WriteF(uint8_t  Value)
 {
@@ -129,10 +129,10 @@ void SPIx_WriteF(uint8_t  Value)
 
 void spiwrite(uint8_t c)
 {
-	//while(SPIH.State!=HAL_SPI_STATE_READY){};
+	while(SPIH->State!=HAL_SPI_STATE_READY){};
 	uint8_t dummy ;
-	HAL_SPI_TransmitReceive(&SPIH, (uint8_t*) &c, &dummy,1 ,SpixTimeout);
-	//while(SPIH.State!=HAL_SPI_STATE_READY){};
+	HAL_SPI_TransmitReceive(SPIH, (uint8_t*) &c, &dummy,1 ,SpixTimeout);
+	while(SPIH->State!=HAL_SPI_STATE_READY){};
 }
 
 void    Delay(int num)
@@ -179,9 +179,10 @@ uint16_t color_convertRGB_to16(uint8_t * adress)
 {
 	return ((adress[0]>>3)<<11)|((adress[1]>>2)<<5)|(adress[2]>>3);
 }
-uint16_t color_convertRGB_to16d(uint8_t R,uint8_t G,uint8_t B)
+uint16_t color_convertRGB_to16d(uint16_t Rc,uint16_t Gc,uint16_t Bc)
 {
-	return ((R>>3)<<11)|((G>>2)<<5)|(B>>3);
+
+	return ((Rc&0b11111000)<<8u)|((Gc&0b11111100)<<3u)|((Bc&0b11111000)>>3u);
 }
 
 static uint16_t screen_width  = ILI9341_LCD_PIXEL_WIDTH;
@@ -317,7 +318,7 @@ void setRotation(uint8_t m) {
      break;
   }
 }
-#define READ_WSPI(x) {while(!((SPIH.Instance->SR) & SPI_FLAG_RXNE));x= *((__IO uint8_t*)&SPIH.Instance->DR);}
+#define READ_WSPI(x) {while(!((SPIH->Instance->SR) & SPI_FLAG_RXNE));x= *((__IO uint8_t*)&SPIH->Instance->DR);}
 
 void setAddrWindow(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1)
 {
@@ -325,7 +326,7 @@ void setAddrWindow(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1)
   uint16_t x_start = x0 + _xstart, x_end = x1 + _xstart;
   uint16_t y_start = y0 + _ystart, y_end = y1 + _ystart;
   uint8_t dummy;
-  dummy = *((__IO uint8_t*)&SPIH.Instance->DR); // clear read flag
+  dummy = *((__IO uint8_t*)&SPIH->Instance->DR); // clear read flag
   LCD_DC_0;
   SPIx_WriteF(ST7789_CASET);
   READ_WSPI(dummy);
@@ -373,13 +374,14 @@ void setAddrWindowA(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1)
   uint16_t y_start = y0 + _ystart, y_end = y1 + _ystart;
   uint8_t b4[4];
 
+  LCD_DC_0;
   writecommand(ST7789_CASET); // Column addr set
   b4[0] = x_start >> 8;
   b4[1] = x_start & 0xff;
   b4[2] = x_end >> 8;
   b4[3] = x_end & 0xff;
   LCD_DC_1;
-  HAL_SPI_Transmit(&SPIH, (uint8_t*) &b4, 4 ,SpixTimeout);
+  HAL_SPI_Transmit(SPIH, (uint8_t*) &b4, 4 ,SpixTimeout);
 
   writecommand(ST7789_RASET); // Row addr set
   b4[0] = y_start >> 8;
@@ -387,7 +389,7 @@ void setAddrWindowA(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1)
   b4[2] = y_end >> 8;
   b4[3] = y_end & 0xff;
   LCD_DC_1;
-  HAL_SPI_Transmit(&SPIH, (uint8_t*) &b4, 4 ,SpixTimeout);
+  HAL_SPI_Transmit(SPIH, (uint8_t*) &b4, 4 ,SpixTimeout);
 
   writecommand(ST7789_RAMWR); // write to RAM
   LCD_DC_1;
@@ -400,10 +402,10 @@ void LCD_sendLineRect(uint16_t y1,uint8_t * data)
 	int x1 = 0;
 	int w  = ILI9341_LCD_PIXEL_WIDTH;
 	int h = 1;
-	while(SPIH.State!=HAL_SPI_STATE_READY){};
+	while(SPIH->State!=HAL_SPI_STATE_READY){};
 	setAddrWindow(x1, y1,x1+w-1,y1+h-1);
 	//LCD_DC_1;
-	HAL_SPI_Transmit_DMA(&SPIH,data, ILI9341_LCD_PIXEL_WIDTH*2);
+	HAL_SPI_Transmit_DMA(SPIH,data, ILI9341_LCD_PIXEL_WIDTH*2);
 	//HAL_SPI_Transmit(&SPIH,data, ILI9341_LCD_PIXEL_WIDTH*2,SpixTimeout);
 }
 
@@ -411,10 +413,10 @@ void LCD_Write8x8line16(uint16_t x1,uint16_t y1,uint16_t * data)
 {
 	int w  = 8;
 	int h  = 8;
-	while(SPIH.State!=HAL_SPI_STATE_READY){};
+	while(SPIH->State!=HAL_SPI_STATE_READY){};
 	setAddrWindow(x1, y1,x1+w-1,y1+h-1);
 	//LCD_DC_1;
-	HAL_SPI_Transmit_DMA(&SPIH,data, 8*8*2);
+	HAL_SPI_Transmit_DMA(SPIH,data, 8*8*2);
 }
 #endif
 
@@ -430,6 +432,122 @@ void LCD_fillRectData(uint16_t x1, uint16_t y1, uint16_t w, uint16_t h, uint8_t*
 		SPIx_WriteF(color[k*2+0]);
 	}
 }
+void LCD_fillRectData8(uint16_t x1, uint16_t y1, uint16_t w, uint16_t h, uint8_t* color_ind,uint16_t* color16)
+{
+	int dw = w*h;
+	setAddrWindow(x1, y1,x1+w-1,y1+h-1);
+	int k;
+	//LCD_DC_1;
+	for(k=0;k<dw;k++)
+	{
+		uint16_t color =  color16[color_ind[k]];
+		SPIx_WriteF(color>>8);
+		SPIx_WriteF(color&0xff);
+	}
+}
+
+
+//extern uint8_t ftable[240*240];
+//extern uint8_t ctable[256*2];
+volatile int flgCmplt = 1;
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+	if(SPIH->Instance==hspi->Instance)
+	{
+		flgCmplt = 1;
+	}
+}
+
+uint8_t dline[0x200];
+#define BS (64*32)
+uint8_t buff[2][BS*2];
+void LCD_fillRectDataTable(uint16_t x1, uint16_t y1, uint16_t w, uint16_t h,uint8_t* ftable,uint8_t* ctable)
+{
+	//uint8_t  Data0 = (GREEN>>8u)&0xff;
+	//uint8_t  Data1 = (GREEN)&0xff;
+	while(!flgCmplt);
+	//HAL_Delay(1);
+	setAddrWindow(x1, y1,x1+w-1,y1+h-1);
+	uint8_t dummy=0xff;
+	int wh = w*h;
+
+	int buffCount = 0;
+	int bp = 0;
+	for(int y=0;y<wh;y++)
+	{
+		int crd = ftable[y];
+		uint8_t a = ctable[crd*2+0];
+		uint8_t b = ctable[crd*2+1];
+		buff[bp][buffCount*2+0] = a;
+		buff[bp][buffCount*2+1] = b;
+		buffCount++;
+		if(buffCount==BS)
+		{
+			while(!flgCmplt);
+			flgCmplt = 0;
+			HAL_SPI_Transmit_DMA(SPIH, buff[bp], BS*2);
+			buffCount = 0;
+			bp=(bp+1)&1;
+		}
+//		SPIx_WriteF(a);
+//		SPIx_WriteF(b);
+	}
+	if(buffCount)
+	{
+		while(!flgCmplt);
+		flgCmplt = 0;
+		HAL_SPI_Transmit_DMA(SPIH, buff,buffCount*2);
+	}
+}
+void LCD_fillRectDataTableO(uint16_t x1, uint16_t y1, uint16_t w, uint16_t h,uint8_t* ftable,uint8_t* ctable)
+{
+	//uint8_t  Data0 = (GREEN>>8u)&0xff;
+	//uint8_t  Data1 = (GREEN)&0xff;
+	//setAddrWindow(x1, y1,x1+w-1,y1+h-1);
+	uint8_t dummy=0xff;
+	for(int y=y1;y<y1+h;y++)
+	{
+/*
+		for(int x=x1;x<x1+w;x++)
+		{
+			int crd = ftable[y*240+x];
+			dline[x*2+0] = ctable[crd*2+0];
+			dline[x*2+1] = ctable[crd*2+1];
+		}
+*/
+
+		setAddrWindow(x1, y,x1+w-1,y);
+		for(int x=x1;x<x1+w;x++)
+		{
+			int crd = ftable[y*240+x];
+			uint8_t a = ctable[crd*2+0];
+			uint8_t b = ctable[crd*2+1];
+			//dline[x*2+0] = ctable[crd*2+0];
+			//dline[x*2+1] = ctable[crd*2+1];
+			SPIx_WriteF(a);
+			SPIx_WriteF(b);
+		}
+		//SPIx_WriteF(0xff);
+		//SPIx_WriteF(0xff);
+
+		HAL_SPI_Transmit(SPIH, (uint8_t*) &dummy,1,SpixTimeout);
+#if 0
+		for(int x=x1;x<x1+w;x++)
+		{
+			//setAddrWindow(x, y,x,y);
+			int crd = ftable[y*240+x];
+
+			//crd = 128;
+			//writedata(ctable[crd*2+0]);
+			//writedata(ctable[crd*2+1]);
+			SPIx_WriteF(ctable[crd*2+0]);
+			SPIx_WriteF(ctable[crd*2+1]);
+		}
+#endif
+		//READ_WSPI(dummy);
+	}
+}
+
 
 //uint8_t block_send[128];
 
@@ -453,14 +571,14 @@ void LCD_fillRect(uint16_t x1, uint16_t y1, uint16_t w, uint16_t h, uint16_t col
 		}
 		while(dw>=64)
 		{
-			HAL_SPI_Transmit_DMA(&SPIH,block_send, 128);
-			while(SPIH.State!=HAL_SPI_STATE_READY){};
+			HAL_SPI_Transmit_DMA(SPIH,block_send, 128);
+			while(SPIH->State!=HAL_SPI_STATE_READY){};
 			dw-=64;
 		}
 		if(dw)
 		{
-			HAL_SPI_Transmit_DMA(&SPIH,block_send, dw*2);
-			while(SPIH.State!=HAL_SPI_STATE_READY){};
+			HAL_SPI_Transmit_DMA(SPIH,block_send, dw*2);
+			while(SPIH->State!=HAL_SPI_STATE_READY){};
 		}
 
 	}
@@ -547,6 +665,72 @@ void LCD_Draw_LinePNX(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* co
     if (e2 < dy) { err += dx; y0 += sy; }
   }
 }
+
+void LCD_Draw_LinePNX8(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* color_ind,uint16_t* color16)
+{
+
+	//while(SPIH.State!=HAL_SPI_STATE_READY){};
+	int k;
+
+  int dx = abs(x1-x0), sx = x0<x1 ? 1 : -1;
+  int dy = abs(y1-y0), sy = y0<y1 ? 1 : -1;
+  int err = (dx>dy ? dx : -dy)/2, e2;
+
+  for(;;){
+		setAddrWindow(x0, y0,x0+N-1,y0);
+		for(int k=0;k<N;k++)
+		{
+			uint16_t clr =  color16[color_ind[y0*Width+x0+k]];
+			SPIx_WriteF(clr>>8);
+			SPIx_WriteF(clr&0xff);
+		}
+    if (x0==x1 && y0==y1) break;
+    e2 = err;
+    if (e2 >-dx) { err -= dy; x0 += sx; }
+    if (e2 < dy) { err += dx; y0 += sy; }
+  }
+}
+
+void LCD_Draw_LinePNXShadow8(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* color_ind,uint16_t* color16)
+{
+
+	//while(SPIH.State!=HAL_SPI_STATE_READY){};
+	int k;
+  uint16_t  result_color;
+  uint8_t*  pbyet = (uint8_t*)&result_color;
+
+  int dx = abs(x1-x0), sx = x0<x1 ? 1 : -1;
+  int dy = abs(y1-y0), sy = y0<y1 ? 1 : -1;
+  int err = (dx>dy ? dx : -dy)/2, e2;
+
+  for(;;){
+	  //while(SPIH.State!=HAL_SPI_STATE_READY){};
+		setAddrWindow(x0, y0,x0+N-1,y0);
+		//LCD_DC_1;
+		for(int k=0;k<N;k++)
+		{
+			int ind = color_ind[(y0*Width+x0+k)];
+
+			uint16_t clr = color16[ind];
+#if 1
+			result_color =  (( 7*((clr>>11)&0x1f)>>3)<<11)|
+					        ( (7*((clr>>5)&0x3f)>>3)<<5)|
+							  (7*(clr&0x1f)>>3 );
+#else
+			result_color =  ((   ((clr>>11)&0x1f)>>1)<<11)|
+					        ( (  ((clr>>5)&0x3f)>>1)<<5)|
+							  (  (clr&0x1f)>>1 );
+#endif
+			SPIx_WriteF(pbyet[1]);
+			SPIx_WriteF(pbyet[0]);
+		}
+    if (x0==x1 && y0==y1) break;
+    e2 = err;
+    if (e2 >-dx) { err -= dy; x0 += sx; }
+    if (e2 < dy) { err += dx; y0 += sy; }
+  }
+}
+
 
 
 void LCD_Draw_LinePNXShadow(int x0, int y0, int x1, int y1,int Width,int N,uint8_t* color) {
