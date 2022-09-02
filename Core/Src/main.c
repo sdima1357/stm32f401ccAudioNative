@@ -43,13 +43,14 @@
 
 //#define EYE
 // use internal timers for sound out
-//#define   USE_PWM
-#define USE_I2S
+#define   USE_PWM
+int volume = 1024;
+//#define USE_I2S
 //#define   USE_SPDIF
 
 
 // from 0 to 2 SPI LCD
-#define NUMBER_OF_LCD 2
+#define NUMBER_OF_LCD 0
 
 //slower for float - faster for integer
 //#define USE_FLOAT_SIGMA
@@ -346,11 +347,11 @@ struct LR getNextSampleLR()
 
 		int32_t W1  =  readPositionXScaled>>(TIME_BIT_SCALE_FACT-BIT_SHIFT_SCALE_FACT) & ((1<<BIT_SHIFT_SCALE_FACT)-1);
 		int32_t W  =  (1<<BIT_SHIFT_SCALE_FACT)-W1;
-		res.L = (L*W+LS*W1)>>BIT_SHIFT_SCALE_FACT;
-		res.R = (R*W+RS*W1)>>BIT_SHIFT_SCALE_FACT;
+		res.L = volume*((L*W+LS*W1)>>BIT_SHIFT_SCALE_FACT)/1024;
+		res.R = volume*((R*W+RS*W1)>>BIT_SHIFT_SCALE_FACT)/1024;
 #else  //floor
-		res.L = L;
-		res.R = R;
+		res.L = volume*L/1024;
+		res.R = volume*R/1024;
 #endif
 	}
     return res;
@@ -1377,7 +1378,9 @@ else
 	  // mode = 1 display 2 ma
 	  // mode = 2 display  6E5C
 	  // mode = 3 display  6Е1П
-	  REF_COLOR = (((uint16_t)TIM2->CNT)+120)%360;
+	  //REF_COLOR = (((uint16_t)TIM2->CNT)+120)%360;
+
+	  volume  = fabs((((uint16_t)TIM2->CNT%2048)-1024));
 	  if(HAL_GetTick()/2048!=ko)
 	  {
 		  ko = HAL_GetTick()/2048;
@@ -1550,9 +1553,9 @@ else
 		ampL =ampL*decay;
 		ampR =ampR*decay;
 	  }
-  }
-  HAL_Delay(2);
 #endif
+  HAL_Delay(2);
+  }
   /* USER CODE END 3 */
 }
 
