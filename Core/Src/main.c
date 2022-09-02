@@ -44,7 +44,6 @@
 //#define EYE
 // use internal timers for sound out
 #define   USE_PWM
-int volume = 1024;
 //#define USE_I2S
 //#define   USE_SPDIF
 
@@ -71,7 +70,7 @@ int volume = 1024;
 
 #ifdef  USE_PWM
 #if     (ORDER!=0)
-#define FREQ  (48000*6)
+#define FREQ  (48000*8)
 #define MAX_VOL  (SYS_CLK_MHZ*1000000/FREQ)
 #else
 #define FREQ  (44100)
@@ -122,6 +121,9 @@ int16_t baudio_buffer[ASBUF_SIZE];
 #define SHIFT_SCALE_FACT  (1<<BIT_SHIFT_SCALE_FACT)
 #endif
 
+#define VOL_BITS   6
+#define VOL_SCALE  (1<<VOL_BITS)
+int volume = VOL_SCALE;
 
 //#define MAX_VOL (2046/TIME_SCALE_FACT)
 
@@ -141,6 +143,7 @@ SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi3;
 DMA_HandleTypeDef hdma_spi3_tx;
 
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
@@ -159,6 +162,7 @@ static void MX_SPI1_Init(void);
 static void MX_SPI3_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -347,11 +351,11 @@ struct LR getNextSampleLR()
 
 		int32_t W1  =  readPositionXScaled>>(TIME_BIT_SCALE_FACT-BIT_SHIFT_SCALE_FACT) & ((1<<BIT_SHIFT_SCALE_FACT)-1);
 		int32_t W  =  (1<<BIT_SHIFT_SCALE_FACT)-W1;
-		res.L = volume*((L*W+LS*W1)>>BIT_SHIFT_SCALE_FACT)/1024;
-		res.R = volume*((R*W+RS*W1)>>BIT_SHIFT_SCALE_FACT)/1024;
+		res.L = volume*((L*W+LS*W1)>>BIT_SHIFT_SCALE_FACT)/VOL_SCALE;
+		res.R = volume*((R*W+RS*W1)>>BIT_SHIFT_SCALE_FACT)/VOL_SCALE;
 #else  //floor
-		res.L = volume*L/1024;
-		res.R = volume*R/1024;
+		res.L = volume*L/VOL_SCALE;
+		res.R = volume*R/VOL_SCALE;
 #endif
 	}
     return res;
@@ -1285,6 +1289,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM3_Init();
   MX_USB_DEVICE_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   //0 1 2 3 0
 #if (NUMBER_OF_LCD)
@@ -1292,7 +1297,7 @@ int main(void)
 #endif
 
   printf("\nStart program\n");
-  //HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
   cleanAudioBuffer();
   TIM3->PSC  = (int)(SYS_CLK_MHZ*1000000.0f/TIMER_CLOCK_FREQ)-1;
   HAL_TIM_Base_Start(&htim3);
@@ -1380,12 +1385,12 @@ else
 	  // mode = 3 display  6Е1П
 	  //REF_COLOR = (((uint16_t)TIM2->CNT)+120)%360;
 
-	  volume  = fabs((((uint16_t)TIM2->CNT%2048)-1024));
+	  volume  = fabs((((uint16_t)TIM2->CNT%(VOL_SCALE*2))-VOL_SCALE));
 	  if(HAL_GetTick()/2048!=ko)
 	  {
 		  ko = HAL_GetTick()/2048;
 	  // printf("%04d %04d %04d %04d %04d\n",HalfTransfer_CallBack_FS_Counter,TransferComplete_CallBack_FS_Counter,AUDIO_PeriodicTC_FS_Counter,AUDIO_OUT_Play_Counter,AUDIO_OUT_ChangeBuffer_Counter);
-		  printf("MAX_VOL = %d INSpeed=%0.01f Hz outSpeed=%0.01f Hz %x Delta %d SMPInH %d elaps = %d mS,ForcedSpeed = %x  %04d PLLspeed = %x %01d %07d s=%d \n",MAX_VOL,inputSpeed,(TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT,outDmaSpeedScaled,appDistErr,samplesInBuffH,elapsed_time_ticks,sForcedSpeed,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled,HAL_GPIO_ReadPin(KEY_GPIO_Port,KEY_Pin),TIM2->CNT,UsbSamplesAvail);
+		  printf("MAX_VOL = %d INSpeed=%0.01f Hz outSpeed=%0.01f Hz %x Delta %d SMPInH %d elaps = %d mS,ForcedSpeed = %x  %04d PLLspeed = %x %01d %07d s=%d vol=%d\n",MAX_VOL,inputSpeed,(TIMER_CLOCK_FREQ*(float)outDmaSpeedScaled)/TIME_SCALE_FACT,outDmaSpeedScaled,appDistErr,samplesInBuffH,elapsed_time_ticks,sForcedSpeed,AUDIO_PeriodicTC_FS_Counter,readSpeedXScaled,HAL_GPIO_ReadPin(KEY_GPIO_Port,KEY_Pin),TIM2->CNT,UsbSamplesAvail,volume);
 
   }
 #if   NUMBER_OF_LCD > 0
@@ -1845,6 +1850,55 @@ static void MX_TIM1_Init(void)
   GPIO_InitStruct.Pull = LL_GPIO_PULL_UP;
   GPIO_InitStruct.Alternate = LL_GPIO_AF_1;
   LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
 
 }
 
