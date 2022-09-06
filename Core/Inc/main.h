@@ -78,8 +78,6 @@ void Error_Handler(void);
 #define LCD1_CMD_GPIO_Port GPIOA
 #define MUTE_OUT_Pin GPIO_PIN_2
 #define MUTE_OUT_GPIO_Port GPIOB
-#define DUMMY_OUT_Pin GPIO_PIN_10
-#define DUMMY_OUT_GPIO_Port GPIOA
 #define LCD_CMD_Pin GPIO_PIN_4
 #define LCD_CMD_GPIO_Port GPIOB
 #define LCD_RESET_Pin GPIO_PIN_8

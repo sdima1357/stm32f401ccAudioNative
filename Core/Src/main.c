@@ -70,7 +70,11 @@
 
 #ifdef  USE_PWM
 #if     (ORDER!=0)
+#if (NUMBER_OF_LCD>0)
+#define FREQ  (48000*6)
+#else
 #define FREQ  (48000*8)
+#endif
 #define MAX_VOL  (SYS_CLK_MHZ*1000000/FREQ)
 #else
 #define FREQ  (44100)
@@ -1373,6 +1377,7 @@ else
   /* USER CODE BEGIN WHILE */
   //int timcnt =0;
   int ko = 0;
+  int old_CNT = 0;
   while (1)
   {
     /* USER CODE END WHILE */
@@ -1384,8 +1389,26 @@ else
 	  // mode = 2 display  6E5C
 	  // mode = 3 display  6Е1П
 	  //REF_COLOR = (((uint16_t)TIM2->CNT)+120)%360;
+	  int new_CNT = TIM2->CNT;
+	  if(new_CNT<old_CNT)
+	  {
+		  volume +=old_CNT - new_CNT;
+		  if(volume>VOL_SCALE)
+		  {
+			  volume = VOL_SCALE;
+		  }
+	  }
+	  else
+	  {
+		  volume -=new_CNT - old_CNT;
+		  if(volume<0)
+		  {
+			  volume = 0;
+		  }
+	  }
+	  old_CNT = new_CNT;
 
-	  volume  = fabs((((uint16_t)TIM2->CNT%(VOL_SCALE*2))-VOL_SCALE));
+	  //volume  = fabs((((uint16_t)TIM2->CNT%(VOL_SCALE*2))-VOL_SCALE));
 	  if(HAL_GetTick()/2048!=ko)
 	  {
 		  ko = HAL_GetTick()/2048;
@@ -2025,7 +2048,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LCD1_CMD_Pin|DUMMY_OUT_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LCD1_CMD_Pin|GPIO_PIN_10, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, MUTE_OUT_Pin|LCD_CMD_Pin|LCD_RESET_Pin|LCD_BL_Pin, GPIO_PIN_RESET);
@@ -2043,8 +2066,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(KEY_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LCD1_CMD_Pin DUMMY_OUT_Pin */
-  GPIO_InitStruct.Pin = LCD1_CMD_Pin|DUMMY_OUT_Pin;
+  /*Configure GPIO pins : LCD1_CMD_Pin PA10 */
+  GPIO_InitStruct.Pin = LCD1_CMD_Pin|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
