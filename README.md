@@ -51,7 +51,7 @@ optional external i2s module
 -- Merge with cdu6 (spdif,pll,int,lcds)
 
 -- add binary(2 lcd & i2s by default) & makefile into Release
-
+-- add ref stm s*1357
 
 ![image2](https://github.com/sdima1357/stm32f401ccAudioNative/blob/main/images/schematic1.png?raw=true)
 
