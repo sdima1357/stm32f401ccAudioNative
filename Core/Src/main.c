@@ -43,13 +43,13 @@
 
 //#define EYE
 // use internal timers for sound out
-#define   USE_PWM
-//#define USE_I2S
+//#define   USE_PWM
+#define USE_I2S
 //#define   USE_SPDIF
 
 
 // from 0 to 2 SPI LCD
-#define NUMBER_OF_LCD 0
+#define NUMBER_OF_LCD 2
 
 //slower for float - faster for integer
 //#define USE_FLOAT_SIGMA

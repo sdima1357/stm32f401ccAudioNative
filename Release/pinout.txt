@@ -1,0 +1,35 @@
+//!!!!!!!!!!!!!stm32f401ccu6!!!!!!!!!!!!!
+V5+			VIN
+GND			GND
+B12   (i2s2_ws)         LCK
+B15   (i2s2_sd)         DIN
+B10   (i2s2_ck)         BCK
+GND                     SCK
+PB2   (mute_out)        XSMT
+
+!!!V3.3+,GND ,LCD_BL  & LCD_RESET are common for both displays!!!
+
+LEFT or siigle display:
+GND                     GND
+V3.3+                   VCC
+PB3 (SPI3_SCK)      	SCK            
+PB5 (SPI3_MOSI)    	SDA
+PB8 (LCD_RESET)  	RES 
+PB4 (LCD_CMD)     	DC     (data/command)
+PB9(LCD_BL)          	BLK  (back light)  
+
+RIGHT  display(optional):
+GND                     GND
+V3.3+                   VCC
+PA5 (SPI1_SCK)      	SCK            
+PA7 (SPI1_MOSI)    	SDA
+PB8 (LCD_RESET)  	RES 
+PA4 (LCD1_CMD)     	DC     (data/command)
+PB9(LCD_BL)          	BLK  (back light)  
+
+rotate encoder (optional)   
+GND                     GND
+V3.3+                   +
+PA0                     SW
+PA15                    DT
+PA1                     CLK
